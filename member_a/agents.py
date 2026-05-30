@@ -231,11 +231,31 @@ class BudgetAgent:
     def calculate(self, state: WorkflowState) -> BudgetReport:
         if state.draft is None:
             raise ValueError("BudgetAgent requires an itinerary draft.")
-        total_thb = sum(item.cost_thb for item in state.draft.items) * state.request.people
+
+        reasons: list[str] = []
+        total_thb = 0.0
+        estimated_items: list[str] = []
+        free_items: list[str] = []
+
+        for item in state.draft.items:
+            cost, cost_note = _cost_for_budget(item)
+            if item.cost_thb <= 0 and cost > 0:
+                item.cost_thb = cost
+                item.cost_note = cost_note
+                estimated_items.append(f"{item.title} [{item.data_id}] {cost:g} THB")
+            elif cost <= 0:
+                free_items.append(f"{item.title} [{item.data_id}]")
+            total_thb += cost
+
+        total_thb *= max(1, state.request.people)
         total = thb_to_money(total_thb)
         budget = request_budget_to_money(state.request.budget_amount, state.request.budget_currency)
         over_budget = budget is not None and total.thb > budget.thb
-        reasons = []
+
+        if estimated_items:
+            reasons.append("部分資料庫項目缺少明確費用，已用類別 fallback 合理估價：" + "; ".join(estimated_items))
+        if state.draft.items and total.thb == 0 and free_items:
+            reasons.append("所有已選項目皆判定為免費或無需門票，因此總費用為 0。")
         if over_budget:
             reasons.append(f"Total cost {total.thb} THB exceeds budget {budget.thb} THB.")
         return BudgetReport(total=total, budget=budget, over_budget=over_budget, reasons=reasons)
@@ -257,6 +277,16 @@ class ReviewerAgent:
                     severity="high",
                     message="TotalCost > Budget; lower the budget tier.",
                     marker=CorrectionMarker.BUDGET_DOWNSHIFT,
+                )
+            )
+
+        if state.draft.items and state.budget_report.total.thb <= 0 and not _all_items_explicitly_free(state.draft.items):
+            issues.append(
+                ReviewIssue(
+                    code="MISSING_COST",
+                    severity="high",
+                    message="Itinerary has items but total cost is 0; add cost estimation or mark all items as explicitly free.",
+                    marker=CorrectionMarker.MISSING_DATA,
                 )
             )
 
@@ -294,6 +324,99 @@ class ReviewerAgent:
                 )
             ]
         return []
+
+
+def _cost_for_budget(item: ItineraryItem) -> tuple[float, str]:
+    """Return a usable per-person THB cost for budget calculation.
+
+    SQLite records sometimes contain 0 because the exact fee is missing, not because
+    the item is truly free. This helper keeps explicitly-free items at 0, but assigns
+    a conservative fallback estimate for missing prices so the UI will not show an
+    unrealistic total_cost = 0.
+    """
+    raw_cost = float(item.cost_thb or 0)
+    if raw_cost > 0:
+        return raw_cost, item.cost_note
+
+    if _is_explicitly_free(item):
+        if item.cost_note:
+            return 0.0, item.cost_note
+        return 0.0, "此項目判定為免費或無需門票。"
+
+    fallback = _fallback_cost_thb(item)
+    if fallback <= 0:
+        return 0.0, item.cost_note or "此項目目前判定為免費或無需門票。"
+
+    return fallback, (
+        item.cost_note
+        or f"資料庫尚無明確費用，系統依 {item.category} 類別自動估算為 {fallback:g} THB / 人。"
+    )
+
+
+def _fallback_cost_thb(item: ItineraryItem) -> float:
+    category = (item.category or "").lower()
+    tags = {tag.lower() for tag in item.tags}
+    title = item.title.lower()
+
+    if category == "food":
+        if "fine_dining" in tags or "luxury" in tags:
+            return 1500.0
+        if {"street_food", "local_food", "night_market"}.intersection(tags):
+            return 200.0
+        return 300.0
+    if category == "market":
+        # 市集通常不用門票，但旅遊預算應估餐飲/購物支出。
+        return 300.0
+    if category == "activity":
+        if "spa" in tags or "massage" in tags or "relax_spa" in tags:
+            return 800.0
+        if "workshop" in tags or "class" in tags:
+            return 1200.0
+        return 600.0
+    if category == "transport":
+        return 250.0
+    if category == "cost":
+        return 300.0
+    if category == "attraction":
+        if any(keyword in title for keyword in ("mall", "market", "park", "bacc")):
+            return 0.0
+        return 200.0
+    return 200.0
+
+
+def _is_explicitly_free(item: ItineraryItem) -> bool:
+    note = (item.cost_note or "").lower()
+    title = (item.title or "").lower()
+    free_keywords = (
+        "免費",
+        "不收門票",
+        "無需門票",
+        "免門票",
+        "free",
+        "free entry",
+        "no admission",
+    )
+    missing_keywords = (
+        "尚無",
+        "未在",
+        "需人工確認",
+        "需依",
+        "另計",
+        "資料庫",
+        "missing",
+        "unknown",
+    )
+    if any(keyword in note for keyword in missing_keywords):
+        return False
+    if any(keyword in note for keyword in free_keywords):
+        return True
+    if item.category == "attraction" and any(keyword in title for keyword in ("park", "mall", "bacc")):
+        return True
+    return False
+
+
+def _all_items_explicitly_free(items: list[ItineraryItem]) -> bool:
+    return bool(items) and all(float(item.cost_thb or 0) <= 0 and _is_explicitly_free(item) for item in items)
 
 
 def _has_preference(request: TravelRequest, *keywords: str) -> bool:
