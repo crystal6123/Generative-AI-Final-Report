@@ -1,13 +1,13 @@
+from __future__ import annotations
+
 import base64
-import hashlib
-import json
-import time
+import html
+import math
 from pathlib import Path
-from urllib.parse import quote, unquote
+from typing import Any
 
 import requests
 import streamlit as st
-import streamlit.components.v1 as components
 
 try:
     import folium
@@ -19,915 +19,561 @@ except Exception:
 from api_client import request_trip_plan
 
 
-TWD_PER_THB = 0.91
-USE_LLM_DEFAULT = True
-SHOW_DEBUG_DEFAULT = False
 MEMBER_A_CHAT_URL = "http://127.0.0.1:8765/member-a/chat"
-
-BASE_DIR = Path(r"C:\github\Generative-AI-Final-Report\member_b")
-
-IMAGE_PATHS = {
-    "hero": BASE_DIR / "hero-bangkok.jpg",
-    "Bangkok": BASE_DIR / "bangkok.jpg",
-    "Chiang Mai": BASE_DIR / "chiang-mai.jpg",
-    "Phuket": BASE_DIR / "phuket.jpg",
-    "Pattaya": BASE_DIR / "Pattaya.jpg",
-}
-
-PREFERENCE_OPTIONS = {
-    "景點": "culture",
-    "美食": "local_food",
-    "夜市": "night_market",
-    "購物": "shopping_mall",
-    "文化": "culture",
-    "海島": "beach_island",
-    "咖啡廳": "cafe_dessert",
-    "小吃": "street_food",
-    "雨天備案": "rainy_day_backup",
-    "親子友善": "family_friendly",
-    "長輩友善": "elderly_friendly",
-    "放鬆慢遊": "relaxed_pace",
-}
+TWD_PER_THB = 0.91
+BASE_DIR = Path(__file__).resolve().parent
 
 CITY_CENTER = {
     "Bangkok": (13.7563, 100.5018),
-    "BKK": (13.7563, 100.5018),
     "Chiang Mai": (18.7883, 98.9853),
     "Phuket": (7.8804, 98.3923),
     "Pattaya": (12.9236, 100.8825),
-    "Chiang Rai": (19.9105, 99.8406),
-    "Ayutthaya": (14.3532, 100.5689),
-    "Hua Hin": (12.5684, 99.9577),
-    "Krabi": (8.0863, 98.9063),
-    "Koh Samui": (9.5120, 100.0136),
+}
+CITY_CONTENT = {
+    "Bangkok": {
+        "image": "bangkok.jpg",
+        "tag": "經典首選",
+        "title": "曼谷 Bangkok",
+        "desc": "金碧輝煌的寺廟、河岸夜景與熱鬧市集交織，適合文化、美食與購物一次滿足。",
+    },
+    "Chiang Mai": {
+        "image": "chiang-mai.jpg",
+        "tag": "慢活古城",
+        "title": "清邁 Chiang Mai",
+        "desc": "古城寺廟、山林咖啡與北泰風情，適合想放慢腳步、深入體驗在地文化的旅人。",
+    },
+    "Phuket": {
+        "image": "phuket.jpg",
+        "tag": "海島度假",
+        "title": "普吉 Phuket",
+        "desc": "湛藍海水、石灰岩海灣與悠閒沙灘，是跳島、看夕陽與度假放空的理想選擇。",
+    },
+    "Pattaya": {
+        "image": "Pattaya.jpg",
+        "tag": "繽紛海濱",
+        "title": "芭達雅 Pattaya",
+        "desc": "水上市場、海濱活動與多元娛樂兼具，適合安排充滿活力的短程旅行。",
+    },
+}
+DAY_THEMES = [
+    {"main": "#f54d8d", "soft": "#fff0f6"},
+    {"main": "#654bd8", "soft": "#f3f0ff"},
+    {"main": "#16b979", "soft": "#eafaf3"},
+    {"main": "#ff8500", "soft": "#fff5e9"},
+    {"main": "#2f80ed", "soft": "#edf5ff"},
+]
+PREFERENCE_OPTIONS = {
+    "文化古蹟": "culture",
+    "在地美食": "local_food",
+    "夜市": "night_market",
+    "購物商場": "shopping_mall",
+    "海島沙灘": "beach_island",
+    "咖啡甜點": "cafe_dessert",
+    "街頭小吃": "street_food",
+    "雨天備案": "rainy_day_backup",
+    "親子友善": "family_friendly",
+    "長輩友善": "elderly_friendly",
+    "悠閒步調": "relaxed_pace",
 }
 
-CITY_QUERY_NAME = {
-    "Bangkok": "Bangkok, Thailand",
-    "BKK": "Bangkok, Thailand",
-    "Chiang Mai": "Chiang Mai, Thailand",
-    "Phuket": "Phuket, Thailand",
-    "Pattaya": "Pattaya, Thailand",
-    "Chiang Rai": "Chiang Rai, Thailand",
-    "Ayutthaya": "Ayutthaya, Thailand",
-    "Hua Hin": "Hua Hin, Thailand",
-    "Krabi": "Krabi, Thailand",
-    "Koh Samui": "Koh Samui, Thailand",
-}
+
+def esc(value: Any) -> str:
+    return html.escape(str(value or ""))
 
 
-def image_to_base64(path: Path) -> str:
+def image_data_uri(filename: str) -> str:
+    path = BASE_DIR / filename
     if not path.exists():
         return ""
-    return base64.b64encode(path.read_bytes()).decode()
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
 
 
-def _safe_float(value, default=0.0):
+def safe_float(value: Any, default: float = 0.0) -> float:
     try:
-        if value is None:
-            return default
-        return float(value)
+        return float(value) if value not in (None, "") else default
     except (TypeError, ValueError):
         return default
 
 
-def _short_hash(text: str) -> str:
-    return hashlib.md5(text.encode("utf-8")).hexdigest()[:10]
+def day_theme(day_no: int) -> dict[str, str]:
+    return DAY_THEMES[(max(day_no, 1) - 1) % len(DAY_THEMES)]
 
 
-def calculate_frontend_fallback_total(result: dict) -> dict:
-    total_thb = 0.0
-    for day in result.get("itinerary", []):
-        for item in day.get("items", []):
-            total_thb += _safe_float(item.get("cost_thb"))
-    return {
-        "thb": round(total_thb, 2),
-        "twd": round(total_thb * TWD_PER_THB, 2),
-        "source": "frontend_fallback",
-    }
+def fallback_total(result: dict[str, Any]) -> float:
+    return sum(
+        safe_float(item.get("cost_thb"))
+        for day in result.get("itinerary", []) or []
+        for item in day.get("items", []) or []
+    )
 
 
-def normalize_result(raw_result: dict) -> dict:
-    result = dict(raw_result)
-    cleaned_itinerary = []
-    for day in result.get("itinerary", []):
-        new_day = dict(day)
-        new_items = []
-        for item in day.get("items", []):
-            if item.get("category") == "cost" or str(item.get("data_id", "")).startswith("COST_MAP_"):
-                continue
-            new_items.append(dict(item))
-        new_day["items"] = new_items
-        cleaned_itinerary.append(new_day)
-    result["itinerary"] = cleaned_itinerary
+def normalize_result(raw_result: dict[str, Any]) -> dict[str, Any]:
+    """Normalize API variants while prioritizing the agreed Chinese total-cost key."""
+    result = dict(raw_result or {})
+    itinerary = []
+    for day in result.get("itinerary", []) or []:
+        clean_day = dict(day)
+        clean_day["items"] = [
+            dict(item)
+            for item in day.get("items", []) or []
+            if item.get("category") != "cost"
+            and not str(item.get("data_id", "")).startswith("COST_MAP_")
+        ]
+        itinerary.append(clean_day)
+    result["itinerary"] = itinerary
 
-    backend_total = result.get("total_cost") or {}
-    backend_thb = _safe_float(backend_total.get("thb"))
-    if backend_total and backend_thb > 0:
-        result["total_cost_source"] = "backend"
-    else:
-        result["total_cost"] = calculate_frontend_fallback_total(result)
-        result["total_cost_source"] = "frontend_fallback"
+    # Member A/B integration contract: total expense is returned in this key.
+    agreed_total_thb = safe_float(result.get("預估總費用_THB"))
+    legacy_total = result.get("total_cost") or {}
+    legacy_total_thb = safe_float(legacy_total.get("thb"))
+    total_thb = agreed_total_thb or legacy_total_thb or fallback_total(result)
+
+    result["預估總費用_THB"] = total_thb
+    total_twd = total_thb * TWD_PER_THB if agreed_total_thb else safe_float(
+        legacy_total.get("twd"), total_thb * TWD_PER_THB
+    )
+    result["total_cost"] = {"thb": total_thb, "twd": total_twd}
     return result
 
 
-def inject_css():
-    bangkok = image_to_base64(IMAGE_PATHS["Bangkok"])
-    chiang_mai = image_to_base64(IMAGE_PATHS["Chiang Mai"])
-    phuket = image_to_base64(IMAGE_PATHS["Phuket"])
-    pattaya = image_to_base64(IMAGE_PATHS["Pattaya"])
+def trip_summary(result: dict[str, Any]) -> dict[str, Any]:
+    itinerary = result.get("itinerary", []) or []
+    items = [item for day in itinerary for item in day.get("items", []) or []]
+    cities = list(dict.fromkeys(day.get("city", "") for day in itinerary if day.get("city")))
+    duration = sum(safe_float(item.get("duration_min")) for item in items)
+    return {
+        "days": len(itinerary),
+        "nights": max(len(itinerary) - 1, 0),
+        "spots": len(items),
+        "moves": max(len(items) - len(itinerary), 0),
+        "hours": round(duration / 60),
+        "cities": cities,
+        "cost_thb": safe_float(result.get("預估總費用_THB")),
+    }
 
-    st.markdown(
-        f"""
+
+def marker_position(city: str, day_no: int, item_idx: int) -> tuple[float, float]:
+    lat, lng = CITY_CENTER.get(city, CITY_CENTER["Bangkok"])
+    angle = math.radians((day_no * 73 + item_idx * 47) % 360)
+    radius = 0.018 + (item_idx % 3) * 0.009
+    return lat + math.sin(angle) * radius, lng + math.cos(angle) * radius
+
+
+def inject_css() -> None:
+    hero = image_data_uri("hero-bangkok.jpg")
+    css = """
         <style>
-        :root {{
-            --bg: #0c1321;
-            --panel: rgba(18, 27, 43, 0.88);
-            --panel2: rgba(255,255,255,0.08);
-            --text: #f8fafc;
-            --muted: #b6c2d1;
-            --line: rgba(255,255,255,0.12);
-            --pink: #ff4fa3;
-            --purple: #7c3aed;
-            --cyan: #67e8f9;
-            --green: #34d399;
-        }}
-        .stApp {{
-            background:
-                radial-gradient(circle at 15% 0%, rgba(124, 58, 237, 0.22), transparent 34%),
-                radial-gradient(circle at 85% 15%, rgba(255, 79, 163, 0.18), transparent 32%),
-                linear-gradient(180deg, #0c1321 0%, #101820 45%, #0b1120 100%);
-            color: var(--text);
-        }}
-        header[data-testid="stHeader"] {{
-            background: rgba(12, 19, 33, 0.72);
-            backdrop-filter: blur(14px);
-        }}
-        section[data-testid="stSidebar"] {{ display: none !important; }}
-        button[kind="header"] {{ display: none !important; }}
-        .block-container {{
-            max-width: 1500px;
-            padding-top: 1rem;
-            padding-bottom: 4rem;
-        }}
-        label, .stMarkdown, .stText, p, span {{ color: var(--text); }}
-
-        .top-hero {{
-            min-height: 610px;
-            border-radius: 0 0 38px 38px;
-            padding: 36px 58px;
-            box-sizing: border-box;
-            background:
-                linear-gradient(90deg, rgba(12, 19, 33, 0.76), rgba(12, 19, 33, 0.25)),
-                url("data:image/jpeg;base64,{image_to_base64(IMAGE_PATHS['hero'])}");
-            background-size: cover;
-            background-position: center;
-            box-shadow: 0 25px 70px rgba(0, 0, 0, 0.35);
-            position: relative;
-            overflow: hidden;
-        }}
-        .hero-chip {{
-            display:inline-flex;
-            align-items:center;
-            gap:9px;
-            padding: 10px 16px;
-            border: 1px solid rgba(255,255,255,0.24);
-            border-radius: 999px;
-            background: rgba(255,255,255,0.13);
-            backdrop-filter: blur(12px);
-            font-weight: 900;
-            color: white;
-            margin-bottom: 120px;
-        }}
-        .hero-title {{
-            font-size: 62px;
-            line-height: 1.12;
-            font-weight: 950;
-            letter-spacing: -1px;
-            margin-bottom: 22px;
-            color: white;
-            text-shadow: 0 4px 18px rgba(0,0,0,0.35);
-        }}
-        .hero-subtitle {{
-            max-width: 680px;
-            font-size: 20px;
-            line-height: 1.9;
-            color: rgba(255,255,255,0.96);
-            text-shadow: 0 3px 12px rgba(0,0,0,0.35);
-        }}
-        .glass-card {{
-            background: var(--panel);
-            border: 1px solid var(--line);
-            border-radius: 28px;
-            padding: 22px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.26);
-            backdrop-filter: blur(18px);
-        }}
-        .section-header {{ margin: 34px 0 18px 0; }}
-        .section-title {{ font-size: 29px; font-weight: 950; color: white; }}
-        .section-subtitle {{ color: var(--muted); margin-top: 6px; }}
-
-        .dest-card {{
-            background: rgba(23, 33, 43, 0.92);
-            border-radius: 22px;
-            overflow: hidden;
-            box-shadow: 0 16px 45px rgba(0, 0, 0, 0.28);
-            border: 1px solid #263241;
-            transition: transform .22s ease, border .22s ease;
-        }}
-        .dest-card:hover {{ transform: translateY(-4px); border-color: rgba(255,79,163,.58); }}
-        .dest-img {{ height: 205px; background-size: cover; background-position: center; position: relative; }}
-        .dest-badge {{
-            position: absolute; top: 14px; left: 14px;
-            background: linear-gradient(90deg, #ff4fa3, #7c3aed);
-            color: white; padding: 7px 12px; border-radius: 999px;
-            font-size: 13px; font-weight: 900;
-        }}
-        .dest-body {{ padding: 18px; }}
-        .dest-title {{ font-size: 21px; font-weight: 950; color: white; margin-bottom: 7px; }}
-        .dest-desc {{ color: #cbd5e1; font-size: 14px; line-height: 1.6; min-height: 66px; }}
-        .dest-bottom {{ margin-top: 14px; color: #94a3b8; font-size: 13px; font-weight: 800; }}
-        .bangkok-img {{ background-image: url("data:image/jpeg;base64,{bangkok}"); }}
-        .chiang-img {{ background-image: url("data:image/jpeg;base64,{chiang_mai}"); }}
-        .phuket-img {{ background-image: url("data:image/jpeg;base64,{phuket}"); }}
-        .pattaya-img {{ background-image: url("data:image/jpeg;base64,{pattaya}"); }}
-
-        .result-shell {{
-            margin-top: 26px;
-            padding: 18px;
-            border-radius: 32px;
-            background: rgba(255,255,255,0.055);
-            border: 1px solid rgba(255,255,255,0.13);
-            box-shadow: 0 26px 80px rgba(0,0,0,0.28);
-        }}
-        .panel-title {{
-            display:flex; align-items:center; gap:10px;
-            font-size: 22px; font-weight: 950; margin-bottom: 14px; color:white;
-        }}
-        .day-box {{
-            background: rgba(8, 13, 24, 0.72);
-            border: 1px solid rgba(255,255,255,0.10);
-            border-radius: 24px;
-            padding: 17px;
-            margin-bottom: 16px;
-        }}
-        .day-title {{
-            display:flex; justify-content:space-between; align-items:center;
-            font-size: 21px; font-weight: 950; color: white; margin-bottom: 12px;
-        }}
-        .city-pill {{
-            display: inline-block;
-            background: rgba(103,232,249,0.12);
-            color: #67e8f9;
-            padding: 6px 12px;
-            border-radius: 999px;
-            font-size: 13px;
-            font-weight: 900;
-        }}
-        .place-card {{
-            background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.045));
-            border: 1px solid rgba(255,255,255,0.10);
-            border-left: 5px solid #ff4fa3;
-            border-radius: 19px;
-            padding: 15px;
-            margin-bottom: 12px;
-        }}
-        .place-index {{
-            display:inline-block;
-            padding: 5px 10px;
-            border-radius: 999px;
-            background: rgba(124,58,237,0.25);
-            color:#ddd6fe;
-            font-size: 12px;
-            font-weight: 950;
-            margin-bottom: 8px;
-        }}
-        .place-title {{ font-size: 17px; font-weight: 950; color:white; margin-bottom: 5px; }}
-        .place-meta {{ color: #cbd5e1; font-size: 13px; line-height: 1.65; }}
-        .source-warning {{
-            background: rgba(251,191,36,0.12);
-            border: 1px solid rgba(251,191,36,0.35);
-            color: #fde68a;
-            padding: 10px 12px;
-            border-radius: 15px;
-            font-size: 13px;
-            margin-bottom: 12px;
-        }}
-        .chat-wrap {{
-            background: rgba(8, 13, 24, 0.78);
-            border: 1px solid rgba(255,255,255,0.12);
-            border-radius: 24px;
-            padding: 16px;
-            min-height: 620px;
-        }}
-        .chat-msg-user, .chat-msg-ai {{
-            padding: 12px 14px;
-            border-radius: 18px;
-            margin-bottom: 12px;
-            font-size: 14px;
-            line-height: 1.65;
-            white-space: pre-wrap;
-        }}
-        .chat-msg-user {{
-            background: linear-gradient(135deg, rgba(124,58,237,.28), rgba(255,79,163,.20));
-            border: 1px solid rgba(124,58,237,.30);
-        }}
-        .chat-msg-ai {{
-            background: rgba(255,255,255,0.08);
-            border: 1px solid rgba(255,255,255,0.10);
-        }}
-        .floating-tip {{
-            position: fixed;
-            right: 28px;
-            bottom: 28px;
-            z-index: 9999;
-            background: linear-gradient(135deg, #7c3aed, #ff4fa3);
-            color: white;
-            padding: 13px 18px;
-            border-radius: 999px;
-            font-weight: 950;
-            box-shadow: 0 14px 40px rgba(124,58,237,.42);
-            border: 1px solid rgba(255,255,255,.3);
-        }}
-        .mapbox {{
-            border-radius: 24px;
-            overflow: hidden;
-            border: 1px solid rgba(255,255,255,0.12);
-            box-shadow: 0 18px 48px rgba(0,0,0,0.24);
-        }}
-        .stButton > button {{
-            min-height: 44px;
-            border-radius: 999px;
-            background: linear-gradient(90deg, #ff4fa3, #7c3aed);
-            color: white;
-            font-weight: 950;
-            border: none;
-            box-shadow: 0 12px 30px rgba(124,58,237,0.24);
-        }}
-        .stButton > button:hover {{
-            border: none;
-            transform: translateY(-1px);
-            box-shadow: 0 16px 38px rgba(255,79,163,0.25);
-        }}
-        div[data-testid="stMetric"] {{
-            background: rgba(23, 33, 43, 0.92);
-            border-radius: 20px;
-            padding: 18px;
-            border: 1px solid #263241;
-        }}
-        input, textarea, div[data-baseweb="select"] > div {{
-            border-radius: 16px !important;
-        }}
+        :root {
+            --ink:#182238; --muted:#758098; --line:#e6ebf3; --pink:#f54d8d;
+            --shadow:0 10px 28px rgba(31,42,68,.08);
+        }
+        .stApp { background:#fbfcfe; color:var(--ink); }
+        header[data-testid="stHeader"] { background:transparent; }
+        section[data-testid="stSidebar"] { display:none!important; }
+        .block-container { max-width:1800px; padding:1.15rem 1.4rem 2rem; }
+        div[data-testid="stVerticalBlock"] { gap:.75rem; }
+        .app-shell { background:#fff; border:1px solid var(--line); border-radius:22px;
+            box-shadow:var(--shadow); padding:14px 16px; }
+        .topbar { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+        .brand { display:flex; align-items:center; gap:14px; }
+        .flag { font-size:34px; }
+        .title { font-size:30px; font-weight:900; color:#101828; letter-spacing:-.5px; }
+        .spark { color:#ffb11b; }
+        .top-actions { display:flex; gap:10px; }
+        .ghost { border:1px solid var(--line); border-radius:10px; padding:10px 15px;
+            font-weight:800; color:#43506a; background:#fff; }
+        .summary-row { display:flex; flex-wrap:wrap; gap:12px; margin-top:14px; }
+        .chip { display:inline-flex; align-items:center; gap:8px; padding:9px 14px;
+            border:1px solid var(--line); border-radius:9px; background:#fff;
+            color:#29344b; font-size:15px; font-weight:700; }
+        .chip.hot { color:#ed3f7d; background:#fff0f5; border-color:#ffe3ee; }
+        .hero { min-height:300px; border-radius:22px; padding:42px; display:flex; align-items:flex-end;
+            background:linear-gradient(90deg,rgba(13,24,45,.82),rgba(13,24,45,.2)),url("{hero}");
+            background-size:cover; background-position:center; box-shadow:var(--shadow); margin-bottom:16px; }
+        .hero-kicker { color:#ffd166; font-weight:800; letter-spacing:.08em; font-size:13px; }
+        .hero-title { color:#fff; font-size:38px; line-height:1.2; font-weight:950; margin:7px 0 10px; }
+        .hero-copy { color:rgba(255,255,255,.9); max-width:620px; line-height:1.7; font-size:15px; }
+        .city-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:15px 0 20px; }
+        .city-card { background:#fff; border:1px solid var(--line); border-radius:16px; overflow:hidden;
+            box-shadow:var(--shadow); }
+        .city-img { height:145px; background-size:cover; background-position:center; }
+        .city-body { padding:13px 14px 15px; }
+        .city-tag { color:#ef3f80; font-size:11px; font-weight:900; }
+        .city-title { color:#17233b; font-size:17px; font-weight:900; margin:4px 0 6px; }
+        .city-desc { color:#748099; font-size:12px; line-height:1.55; }
+        .result-hero { min-height:150px; border-radius:18px; padding:22px 25px; display:flex; align-items:flex-end;
+            background-size:cover; background-position:center; box-shadow:var(--shadow); margin:12px 0 14px; }
+        .result-hero-title { color:#fff; font-size:24px; font-weight:950; text-shadow:0 2px 9px rgba(0,0,0,.4); }
+        .result-hero-copy { color:rgba(255,255,255,.94); margin-top:4px; font-size:13px;
+            text-shadow:0 2px 7px rgba(0,0,0,.4); }
+        .content-panel { background:#fff; border:1px solid var(--line); border-radius:18px;
+            box-shadow:var(--shadow); padding:13px; min-height:720px; }
+        .panel-title { display:flex; justify-content:space-between; align-items:center;
+            font-size:20px; font-weight:900; color:#24314b; margin:2px 4px 12px; }
+        .small-action { color:#65718a; border:1px solid var(--line); border-radius:9px;
+            padding:7px 10px; font-size:12px; background:#fff; }
+        .day-card { border:1px solid var(--line); border-radius:14px; overflow:hidden; margin-bottom:9px; }
+        .day-card.active { border-color:var(--day); box-shadow:0 7px 18px var(--soft); }
+        .day-head { display:flex; align-items:center; justify-content:space-between;
+            padding:11px 13px; background:linear-gradient(90deg,var(--soft),#fff); }
+        .day-name { display:flex; align-items:center; gap:9px; color:var(--day); font-weight:900; }
+        .day-city { color:var(--day); font-size:13px; font-weight:600; }
+        .count { color:var(--day); background:var(--soft); padding:5px 9px; border-radius:999px;
+            font-size:12px; font-weight:800; }
+        .spot { display:grid; grid-template-columns:28px 1fr auto; gap:9px; align-items:center;
+            padding:10px 11px; border-top:1px solid #eef1f6; }
+        .spot-num { width:20px; height:20px; border-radius:50%; display:flex; align-items:center;
+            justify-content:center; color:#fff; background:var(--day); font-size:11px; font-weight:900; }
+        .spot-title { font-size:13.5px; font-weight:900; color:#202b43; margin-bottom:3px; }
+        .spot-meta { color:#748099; font-size:11.5px; line-height:1.45; }
+        .ai-tag { color:var(--day); background:var(--soft); border-radius:8px; padding:6px 7px;
+            font-size:11px; font-weight:900; }
+        .map-head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+        .map-stats { display:flex; gap:7px; flex-wrap:wrap; justify-content:flex-end; }
+        .map-stat { border:1px solid var(--line); border-radius:9px; padding:7px 9px;
+            background:#fff; font-size:12px; color:#39455e; font-weight:700; }
+        iframe { border-radius:14px; }
+        .chat-shell { border:1px solid var(--line); border-radius:18px 18px 0 0;
+            box-shadow:var(--shadow); background:#fff; overflow:hidden; }
+        .chat-head { padding:17px 16px; border-bottom:1px solid var(--line); font-size:20px;
+            font-weight:900; color:#26334e; }
+        .chat-welcome { margin:13px; padding:12px; border:1px solid var(--line); border-radius:11px;
+            font-size:13px; line-height:1.55; color:#26334e; }
+        .today { display:flex; align-items:center; gap:8px; padding:6px 13px; color:#748099;
+            font-size:12px; }
+        .today:before,.today:after { content:""; height:1px; flex:1; background:var(--line); }
+        .messages { padding:7px 13px 12px; min-height:260px; max-height:440px; overflow-y:auto; }
+        .msg { padding:10px 11px; border-radius:11px; margin-bottom:10px; font-size:12.5px;
+            line-height:1.55; white-space:pre-wrap; color:#27334b; }
+        .msg.user { margin-left:35px; background:#fff0f5; border:1px solid #ffc3d8; }
+        .msg.assistant { margin-right:22px; background:#fff; border:1px solid var(--line);
+            box-shadow:0 5px 14px rgba(31,42,68,.05); }
+        .form-card { background:#fff; border:1px solid var(--line); border-radius:18px;
+            box-shadow:var(--shadow); padding:16px; margin-bottom:14px; }
+        .landing-title { font-size:26px; font-weight:900; margin-bottom:5px; color:#182238; }
+        .landing-sub { color:#758098; font-size:14px; margin-bottom:12px; }
+        .stButton>button, .stFormSubmitButton>button, button[kind="primary"], button[kind="secondary"], button[kind="formSubmit"] {
+            border-radius:9px!important; border:0!important; background:linear-gradient(90deg,#ff4f91,#ee3f82)!important;
+            color:#fff!important; font-weight:800!important; min-height:40px; }
+        .stButton>button p, .stFormSubmitButton>button p, button[kind="primary"] p, button[kind="secondary"] p, button[kind="formSubmit"] p {
+            color:#fff!important; }
+        div[data-testid="stExpander"] { border:1px solid var(--line); border-radius:14px; overflow:hidden;
+            background:#fff; margin-bottom:9px; }
+        div[data-testid="stExpander"] summary { font-weight:850; color:#27334b; }
+        div[data-testid="stExpander"] summary p { color:#27334b!important; }
+        div[data-baseweb="select"]>div, input, textarea { border-radius:9px!important; }
+        @media (max-width:1100px) {
+            .title{font-size:22px}.top-actions{display:none}.block-container{padding:.7rem}
+            .city-grid{grid-template-columns:1fr 1fr}.content-panel,.chat-shell{min-height:auto}
+        }
         </style>
-        """,
+        """
+    st.markdown(
+        css.replace("{hero}", hero),
         unsafe_allow_html=True,
     )
 
 
-def scroll_to_result():
-    components.html(
-        """
-        <script>
-        setTimeout(function() {
-            const target = window.parent.document.getElementById("result-section");
-            if (target) {
-                target.scrollIntoView({ behavior: "smooth", block: "start" });
-            }
-        }, 350);
-        </script>
-        """,
-        height=0,
-    )
-
-
-def render_landing_top():
+def render_landing_content() -> None:
     st.markdown(
         """
-        <div class="top-hero">
-            <div class="hero-chip"> LLM × Multi-Agent Thailand Planner</div>
-            <div class="hero-title">探索泰國<br>遇見專屬你的 AI 自由行</div>
-            <div class="hero-subtitle">
-                結合 Gemini、SQLite 景點資料與 Multi-Agent 檢查流程，<br>
-                自動產生行程、標示地圖景點，並用 AI 聊天機器人即時解答旅遊問題。
-            </div>
+        <div class="hero">
+          <div>
+            <div class="hero-kicker">THAILAND · AI TRAVEL PLANNER</div>
+            <div class="hero-title">讓每一天，都有值得期待的泰國風景</div>
+            <div class="hero-copy">從曼谷寺廟、清邁古城到普吉海灣，輸入你的天數、預算與偏好，交給 AI 規劃一趟兼具節奏、費用與在地體驗的旅程。</div>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-
-def render_destination_cards():
-    st.markdown(
-        """
-        <div class="section-header">
-            <div class="section-title">✧ 熱門目的地</div>
-            <div class="section-subtitle">選擇城市與偏好後，AI 會自動產生行程並標示地圖位置。</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    c1, c2, c3, c4 = st.columns(4)
-    cards = [
-        ("pattaya-img", "水上市場", "芭達雅", "海灘、夜生活與水上市場風情，適合短途旅行。", "推薦停留 2-3 天"),
-        ("bangkok-img", "城市魅力", "曼谷", "購物、美食、古蹟與夜市一次滿足。", "推薦停留 3-4 天"),
-        ("phuket-img", "海島天堂", "普吉島", "海灘、水上活動與熱帶島嶼風情。", "推薦停留 4-5 天"),
-        ("chiang-img", "文藝古城", "清邁", "古城文化、寺廟巡禮與泰北慢活。", "推薦停留 3-4 天"),
-    ]
-    for col, card in zip([c1, c2, c3, c4], cards):
-        img_class, badge, title, desc, stay = card
-        with col:
-            st.markdown(
-                f"""
-                <div class="dest-card">
-                    <div class="dest-img {img_class}"><div class="dest-badge">{badge}</div></div>
-                    <div class="dest-body">
-                        <div class="dest-title">{title}</div>
-                        <div class="dest-desc">{desc}</div>
-                        <div class="dest-bottom">{stay}</div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-
-def render_budget_summary(result: dict):
-    total_cost = result.get("total_cost", {}) or {}
-    budget = result.get("budget", {}) or {}
-    c1, c2, c3 = st.columns(3)
-    c1.metric("預估總花費 THB", f"{_safe_float(total_cost.get('thb')):,.0f}")
-    c2.metric("預估總花費 TWD", f"{_safe_float(total_cost.get('twd')):,.0f}")
-    c3.metric("使用者預算 TWD", f"{_safe_float(budget.get('twd')):,.0f}" if budget else "-")
-
-
-def _fallback_marker_position(city: str, day_no: int, item_idx: int) -> tuple[float, float]:
-    base_lat, base_lng = CITY_CENTER.get(city, CITY_CENTER["Bangkok"])
-    offset_seed = (day_no * 7 + item_idx * 3)
-    lat_offset = ((offset_seed % 5) - 2) * 0.006
-    lng_offset = (((offset_seed + 2) % 5) - 2) * 0.006
-    return base_lat + lat_offset, base_lng + lng_offset
-
-
-def _extract_lat_lng(item: dict):
-    possible_lat_keys = ["lat", "latitude", "緯度"]
-    possible_lng_keys = ["lng", "lon", "longitude", "經度"]
-    lat = None
-    lng = None
-    for key in possible_lat_keys:
-        if key in item and item.get(key) not in (None, ""):
-            lat = _safe_float(item.get(key), None)
-            break
-    for key in possible_lng_keys:
-        if key in item and item.get(key) not in (None, ""):
-            lng = _safe_float(item.get(key), None)
-            break
-    if lat is not None and lng is not None and lat != 0 and lng != 0:
-        return lat, lng
-    return None
-
-
-def geocode_place(title: str, city: str) -> tuple[float, float] | None:
-    """Use OpenStreetMap Nominatim to get coordinates when DB has no lat/lng.
-
-    This keeps a session cache to avoid repeated calls. For classroom demos this is
-    enough; for production use Google Maps Platform, Mapbox, or a pre-geocoded DB.
-    """
-    if not title:
-        return None
-
-    if "geocode_cache" not in st.session_state:
-        st.session_state.geocode_cache = {}
-
-    clean_title = title.split("/")[0].strip()
-    city_query = CITY_QUERY_NAME.get(city, f"{city}, Thailand")
-    query = f"{clean_title}, {city_query}"
-    cache_key = query.lower()
-
-    if cache_key in st.session_state.geocode_cache:
-        cached = st.session_state.geocode_cache[cache_key]
-        return tuple(cached) if cached else None
-
-    try:
-        response = requests.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={"q": query, "format": "json", "limit": 1, "addressdetails": 0},
-            headers={"User-Agent": "ThailandAITravelPlannerDemo/1.0"},
-            timeout=5,
+    cards = []
+    for content in CITY_CONTENT.values():
+        cards.append(
+            f"""<div class="city-card"><div class="city-img" style="background-image:url('{image_data_uri(content['image'])}')"></div>
+            <div class="city-body"><div class="city-tag">{esc(content['tag'])}</div>
+            <div class="city-title">{esc(content['title'])}</div><div class="city-desc">{esc(content['desc'])}</div></div></div>"""
         )
-        if response.status_code == 200:
-            data = response.json()
-            if data:
-                lat_lng = (float(data[0]["lat"]), float(data[0]["lon"]))
-                st.session_state.geocode_cache[cache_key] = lat_lng
-                time.sleep(0.15)
-                return lat_lng
-    except Exception:
-        pass
-
-    st.session_state.geocode_cache[cache_key] = None
-    return None
+    st.markdown(f'<div class="city-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
 
 
-def enrich_result_with_coordinates(result: dict) -> dict:
-    enriched = dict(result)
-    geocode_status = []
-
-    for day in enriched.get("itinerary", []):
-        city = day.get("city", "Bangkok")
-        for idx, item in enumerate(day.get("items", []), start=1):
-            existing = _extract_lat_lng(item)
-            if existing:
-                item["_map_lat"] = existing[0]
-                item["_map_lng"] = existing[1]
-                item["_map_source"] = "database"
-                continue
-
-            found = geocode_place(item.get("title", ""), city)
-            if found:
-                item["_map_lat"] = found[0]
-                item["_map_lng"] = found[1]
-                item["_map_source"] = "external_geocoding"
-                geocode_status.append(f"{item.get('title', '')}：外部地圖定位")
-            else:
-                fallback = _fallback_marker_position(city, day.get("day", 1), idx)
-                item["_map_lat"] = fallback[0]
-                item["_map_lng"] = fallback[1]
-                item["_map_source"] = "city_fallback"
-                geocode_status.append(f"{item.get('title', '')}：暫用城市中心附近位置")
-
-    enriched["_geocode_status"] = geocode_status
-    return enriched
-
-
-def build_ai_prompt_for_item(day: dict, item: dict) -> str:
-    return f"""我想詢問關於這個泰國旅遊景點／行程點：
-
-Day {day.get('day')}｜城市：{day.get('city', '')}
-名稱：{item.get('title', '')}
-類型：{item.get('category', '')}
-資料編號：{item.get('data_id', '')}
-開始時間：{item.get('start_time', '')}
-預估停留：{item.get('duration_min', '')} 分鐘
-預估費用：{item.get('cost_thb', 0)} THB
-備註：{item.get('note', '')}
-
-請用繁體中文說明：
-1. 這個地方有什麼特色
-2. 適合安排在這天的原因
-3. 附近可以順遊什麼
-4. 有什麼注意事項
-"""
-
-
-def ask_ai_about_item(day: dict, item: dict):
-    st.session_state.chat_open = True
-    st.session_state.chat_prefill = build_ai_prompt_for_item(day, item)
-
-
-def render_itinerary_text_panel(result: dict):
-    for day in result.get("itinerary", []):
+def render_planner_form(compact: bool = False) -> bool:
+    with st.container():
+        if not compact:
+            render_landing_content()
         st.markdown(
-            f"""
-            <div class="day-box">
-                <div class="day-title">
-                    <span>Day {day.get('day')}</span>
-                    <span class="city-pill">{day.get('city', '')}</span>
-                </div>
+            """
+            <div class="form-card">
+              <div class="landing-title">🇹🇭 泰國 AI 智慧旅遊規劃</div>
+              <div class="landing-sub">輸入旅行條件，由 member A API 產生行程，再於此介面查看地圖、費用與 AI 建議。</div>
+            </div>
             """,
             unsafe_allow_html=True,
         )
-
-        for idx, item in enumerate(day.get("items", []), start=1):
-            source_label = {
-                "database": "資料庫座標",
-                "external_geocoding": "外部地圖定位",
-                "city_fallback": "城市中心暫定位",
-            }.get(item.get("_map_source"), "")
-            marker_label = f"D{day.get('day')}-{idx}"
-            st.markdown(
-                f"""
-                <div class="place-card">
-                    <div class="place-index">{marker_label}｜{source_label}</div>
-                    <div class="place-title">{item.get('title', '')}</div>
-                    <div class="place-meta">
-                        {item.get('start_time', '')}｜{item.get('category', '')}<br>
-                        停留：{item.get('duration_min', '')} 分鐘｜費用：{_safe_float(item.get('cost_thb')):,.0f} THB<br>
-                        編號：{item.get('data_id', '')}
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+        with st.form("planner_form", clear_on_submit=False):
+            cols = st.columns([1.15, .8, .8, 1.1])
+            city = cols[0].selectbox("目的地", list(CITY_CENTER.keys()), key="city")
+            days = cols[1].slider("天數", 1, 10, 4, key="days")
+            people = cols[2].number_input("人數", 1, 20, 2, key="people")
+            budget = cols[3].number_input("預算 TWD", 1000, 300000, 20000, step=1000, key="budget")
+            preferences = st.multiselect(
+                "旅行偏好",
+                list(PREFERENCE_OPTIONS.keys()),
+                default=["文化古蹟", "在地美食"],
+                key="preferences",
             )
-            if st.button(" 詢問 AI 這個景點", key=f"ask_left_{day.get('day')}_{idx}_{_short_hash(item.get('title',''))}"):
-                ask_ai_about_item(day, item)
-                st.rerun()
+            submitted = st.form_submit_button("產生 AI 行程", use_container_width=True)
 
-        st.markdown("</div>", unsafe_allow_html=True)
-
-
-def render_itinerary_map(result: dict):
-    if folium is None or st_folium is None:
-        st.error("尚未安裝地圖套件。請先執行：pip install folium streamlit-folium")
-        return
-
-    itinerary = result.get("itinerary", [])
-    if not itinerary:
-        st.warning("沒有 itinerary，無法顯示地圖。")
-        return
-
-    first_city = itinerary[0].get("city", "Bangkok")
-    center = CITY_CENTER.get(first_city, CITY_CENTER["Bangkok"])
-    m = folium.Map(location=center, zoom_start=12, tiles="CartoDB positron")
-
-    group_colors = ["purple", "blue", "green", "orange", "red", "cadetblue", "darkpurple"]
-    all_points = []
-
-    for day in itinerary:
-        day_no = day.get("day", 1)
-        color = group_colors[(day_no - 1) % len(group_colors)]
-        feature_group = folium.FeatureGroup(name=f"Day {day_no}｜{day.get('city', '')}")
-        day_points = []
-
-        for idx, item in enumerate(day.get("items", []), start=1):
-            lat = item.get("_map_lat")
-            lng = item.get("_map_lng")
-            if lat is None or lng is None:
-                continue
-
-            marker_label = f"D{day_no}-{idx}"
-            title = item.get("title", "")
-            cost = _safe_float(item.get("cost_thb"))
-            duration = item.get("duration_min", "")
-            data_id = item.get("data_id", "")
-            source = item.get("_map_source", "")
-            prompt = quote(build_ai_prompt_for_item(day, item))
-            ask_link = f"?ask_ai={prompt}"
-
-            tooltip_html = f"""
-            <div style='font-family:Microsoft JhengHei; font-size:13px;'>
-                <b>{marker_label}｜{title}</b><br>
-                停留：{duration} 分鐘｜費用：{cost:,.0f} THB<br>
-                座標來源：{source}
-            </div>
-            """
-            popup_html = f"""
-            <div style="width:260px;font-family:Microsoft JhengHei;line-height:1.55;">
-                <div style="font-size:16px;font-weight:800;margin-bottom:6px;">{marker_label}｜{title}</div>
-                <div>編號：{data_id}</div>
-                <div>類型：{item.get('category', '')}</div>
-                <div>開始：{item.get('start_time', '')}</div>
-                <div>停留：{duration} 分鐘</div>
-                <div>費用：{cost:,.0f} THB</div>
-                <div style="margin-top:8px;color:#666;">滑鼠移上 marker 可看摘要；點下方按鈕會把景點資訊帶入聊天機器人。</div>
-                <a target="_parent" href="{ask_link}"
-                   style="display:inline-block;margin-top:10px;padding:8px 12px;background:#7c3aed;color:white;text-decoration:none;border-radius:999px;font-weight:800;">
-                   詢問 AI 這個景點
-                </a>
-            </div>
-            """
-
-            folium.Marker(
-                location=[lat, lng],
-                tooltip=folium.Tooltip(tooltip_html, sticky=True),
-                popup=folium.Popup(popup_html, max_width=320),
-                icon=folium.DivIcon(
-                    html=f"""
-                    <div style="
-                        background: linear-gradient(135deg,#7c3aed,#ff4fa3);
-                        color:white;
-                        border:2px solid white;
-                        box-shadow:0 8px 18px rgba(0,0,0,.25);
-                        border-radius:999px;
-                        width:46px;height:46px;
-                        display:flex;align-items:center;justify-content:center;
-                        font-size:12px;font-weight:900;
-                        font-family:Arial;">
-                        {marker_label}
-                    </div>
-                    """
-                ),
-            ).add_to(feature_group)
-
-            day_points.append((lat, lng))
-            all_points.append((lat, lng))
-
-        if len(day_points) >= 2:
-            folium.PolyLine(day_points, color=color, weight=4, opacity=0.72, tooltip=f"Day {day_no} 路線").add_to(feature_group)
-        feature_group.add_to(m)
-
-    if all_points:
-        m.fit_bounds(all_points, padding=(30, 30))
-
-    folium.LayerControl(collapsed=False).add_to(m)
-    st.markdown('<div class="mapbox">', unsafe_allow_html=True)
-    st_folium(m, width="100%", height=680, returned_objects=[])
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    statuses = result.get("_geocode_status", [])
-    if statuses:
-        with st.expander("地圖定位說明", expanded=False):
-            st.write("若資料庫沒有 lat/lng，系統會先用外部地圖查詢；查不到才暫用城市中心附近位置。正式 Demo 建議把常用景點經緯度寫回資料庫。")
-            for s in statuses[:20]:
-                st.caption(f"• {s}")
-
-
-def _consume_query_prefill():
-    params = st.query_params
-    ask_value = params.get("ask_ai")
-    if ask_value:
-        if isinstance(ask_value, list):
-            ask_value = ask_value[0]
-        st.session_state.chat_prefill = unquote(str(ask_value))
-        st.session_state.chat_open = True
+    if submitted:
+        payload = {
+            "days": days,
+            "nights": max(days - 1, 0),
+            "people": people,
+            "budget_amount": budget,
+            "budget_currency": "TWD",
+            "cities": [city],
+            "preferences": [PREFERENCE_OPTIONS[p] for p in preferences] or ["no_special_preference"],
+            "user_text": "、".join(preferences),
+            "daily_start_time": "10:00",
+            "daily_end_time": "22:00",
+            "last_day_start_time": "10:00",
+            "last_day_end_time": "17:00",
+            "use_llm": True,
+            "llm_provider": "gemini",
+        }
         try:
-            del st.query_params["ask_ai"]
-        except Exception:
-            pass
-
-
-def send_chat_message(message: str) -> str:
-    history = st.session_state.get("chat_messages", [])
-    response = requests.post(
-        MEMBER_A_CHAT_URL,
-        json={"message": message, "history": history},
-        timeout=80,
-    )
-    data = response.json()
-    if response.status_code != 200:
-        return f"AI API 發生錯誤：{data.get('error', '未知錯誤')}"
-    return data.get("reply", "Gemini 沒有回傳內容。")
-
-
-def render_ai_chatbot_panel():
-    if "chat_open" not in st.session_state:
-        st.session_state.chat_open = True
-    if "chat_messages" not in st.session_state:
-        st.session_state.chat_messages = [
-            {"role": "assistant", "content": "你好，我是 AI 泰國旅遊助手。你可以點選景點的『詢問 AI』，我會自動帶入該景點資訊。"}
-        ]
-
-    st.markdown('<div class="chat-wrap">', unsafe_allow_html=True)
-    st.markdown('<div class="panel-title">🤖 AI 泰國旅遊助手</div>', unsafe_allow_html=True)
-
-    for msg in st.session_state.chat_messages[-8:]:
-        css_class = "chat-msg-user" if msg["role"] == "user" else "chat-msg-ai"
-        who = "你" if msg["role"] == "user" else "AI"
-        st.markdown(f'<div class="{css_class}"><b>{who}：</b><br>{msg["content"]}</div>', unsafe_allow_html=True)
-
-    default_text = st.session_state.pop("chat_prefill", "")
-    user_input = st.text_area(
-        "輸入你的問題",
-        value=default_text,
-        height=145,
-        placeholder="例如：這個景點適合排在哪一天？附近有什麼美食？",
-        key="chat_input_text",
-    )
-
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        send = st.button("送出詢問", key="send_chat_btn")
-    with c2:
-        clear = st.button("清除對話", key="clear_chat_btn")
-
-    if clear:
-        st.session_state.chat_messages = [
-            {"role": "assistant", "content": "對話已清除。你可以重新詢問任何泰國旅遊問題。"}
-        ]
-        st.rerun()
-
-    if send and user_input.strip():
-        st.session_state.chat_messages.append({"role": "user", "content": user_input.strip()})
-        with st.spinner("Gemini 正在回覆..."):
-            try:
-                reply = send_chat_message(user_input.strip())
-            except Exception as exc:
-                reply = f"無法連線到 AI API：{exc}"
-        st.session_state.chat_messages.append({"role": "assistant", "content": reply})
-        st.rerun()
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-
-def render_floating_hint():
-    st.markdown('<div class="floating-tip">🤖 右側可詢問 AI 旅遊助手</div>', unsafe_allow_html=True)
-
-
-def render_planner_form():
-    st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-    c1, c2, c3, c4, c5 = st.columns([1.2, 1, 1, 1.2, 1])
-
-    with c1:
-        city = st.selectbox("想去哪裡？", ["Bangkok", "Chiang Mai", "Phuket", "Pattaya"])
-    with c2:
-        days = st.slider("旅行天數", 1, 10, 4)
-    with c3:
-        people = st.number_input("旅客人數", min_value=1, max_value=20, value=2)
-    with c4:
-        budget = st.number_input("總預算 TWD", min_value=1000, max_value=200000, value=20000)
-    with c5:
-        st.write("")
-        st.write("")
-        generate = st.button("開始搜尋", type="primary", use_container_width=True)
-
-    preference_labels = st.multiselect(
-        "旅遊偏好",
-        list(PREFERENCE_OPTIONS.keys()),
-        default=["景點", "美食"],
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    return city, days, people, budget, preference_labels, generate
-
-
-def run_generation(city, days, people, budget, preference_labels):
-    preferences = [PREFERENCE_OPTIONS[label] for label in preference_labels if label in PREFERENCE_OPTIONS]
-    preferences = list(dict.fromkeys(preferences)) or ["no_special_preference"]
-
-    payload = {
-        "days": days,
-        "nights": max(days - 1, 0),
-        "people": people,
-        "budget_amount": budget,
-        "budget_currency": "TWD",
-        "cities": [city],
-        "preferences": preferences,
-        "user_text": "、".join(preference_labels),
-        "daily_start_time": "10:00",
-        "daily_end_time": "22:00",
-        "last_day_start_time": "10:00",
-        "last_day_end_time": "17:00",
-        "use_llm": USE_LLM_DEFAULT,
-        "llm_provider": "gemini",
-    }
-
-    with st.spinner("AI Agent 正在規劃行程與建立地圖標記..."):
-        raw_result = request_trip_plan(payload)
-        normalized = normalize_result(raw_result)
-        enriched = enrich_result_with_coordinates(normalized)
+            with st.spinner("AI 正在規劃行程..."):
+                result = normalize_result(request_trip_plan(payload))
+        except Exception as exc:
+            st.error(f"行程 API 呼叫失敗：{exc}")
+            return submitted
         st.session_state["last_payload"] = payload
-        st.session_state["raw_result"] = raw_result
-        st.session_state["latest_result"] = enriched
-        st.session_state["scroll_to_result"] = True
+        st.session_state["latest_result"] = result
+        st.rerun()
+    return submitted
 
 
-def render_result_dashboard(result: dict):
-    st.markdown('<div id="result-section"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="result-shell">', unsafe_allow_html=True)
-
+def render_result_hero(result: dict[str, Any]) -> None:
+    summary = trip_summary(result)
+    city = summary["cities"][0] if summary["cities"] else "Bangkok"
+    content = CITY_CONTENT.get(city, CITY_CONTENT["Bangkok"])
     st.markdown(
-        """
-        <div class="section-header" style="margin-top:4px;">
-            <div class="section-title">🗺️ AI 行程地圖與景點資訊</div>
-            <div class="section-subtitle">地圖 marker 會依 Day 標示；滑鼠移上可看摘要，點 marker 可看詳細資訊並帶入 AI 聊天機器人。</div>
+        f"""<div class="result-hero" style="background-image:linear-gradient(90deg,rgba(16,31,57,.78),rgba(16,31,57,.12)),url('{image_data_uri(content['image'])}')">
+        <div><div class="result-hero-title">{esc(content['title'])}</div>
+        <div class="result-hero-copy">{esc(content['desc'])}</div></div></div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_topbar(result: dict[str, Any]) -> None:
+    summary = trip_summary(result)
+    payload = st.session_state.get("last_payload", {})
+    city = summary["cities"][0] if summary["cities"] else "Thailand"
+    title = f"{city} {summary['days']}天{summary['nights']}夜 AI 智慧旅遊規劃"
+    st.markdown(
+        f"""
+        <div class="app-shell">
+          <div class="topbar">
+            <div class="brand"><span class="flag">🇹🇭</span>
+              <div class="title">{esc(title)} <span class="spark">✦</span></div>
+            </div>
+            <div class="top-actions"><div class="ghost">⇩ 匯出行程</div><div class="ghost">⌯ 分享行程</div></div>
+          </div>
+          <div class="summary-row">
+            <div class="chip">👥 {int(payload.get("people", 2))}人出遊</div>
+            <div class="chip">💰 預算 {summary["cost_thb"]:,.0f} THB</div>
+            <div class="chip">📍 {summary["spots"]} 個景點</div>
+            <div class="chip">◷ 預估 {summary["hours"]} 小時</div>
+            <div class="chip hot">🍜 美食導向</div>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    render_budget_summary(result)
-    st.write("")
 
-    left_col, map_col, chat_col = st.columns([1.05, 1.75, 1.05], gap="large")
-    with left_col:
-        st.markdown('<div class="panel-title">📍 行程與景點</div>', unsafe_allow_html=True)
-        render_itinerary_text_panel(result)
-    with map_col:
-        st.markdown('<div class="panel-title">🗺️ 外部地圖標示</div>', unsafe_allow_html=True)
-        render_itinerary_map(result)
-    with chat_col:
-        render_ai_chatbot_panel()
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-
-def main():
-    st.set_page_config(
-        page_title="Thailand AI Travel Planner",
-        page_icon="🇹🇭",
-        layout="wide",
-        initial_sidebar_state="collapsed",
+def render_itinerary(result: dict[str, Any]) -> None:
+    itinerary = result.get("itinerary", []) or []
+    st.markdown(
+        '<div class="panel-title"><span>▣&nbsp; 行程總覽</span><span class="small-action">點擊展開每日內容</span></div>',
+        unsafe_allow_html=True,
     )
-    _consume_query_prefill()
-    inject_css()
-    render_landing_top()
-    city, days, people, budget, preference_labels, generate = render_planner_form()
-    render_destination_cards()
+    for day_index, day in enumerate(itinerary):
+        day_no = int(day.get("day", day_index + 1))
+        theme = day_theme(day_no)
+        items = day.get("items", []) or []
+        label = f"Day {day_no} · {day.get('city', '')} · {len(items)} 個景點"
+        with st.expander(label, expanded=day_index == 0):
+            for idx, item in enumerate(items, start=1):
+                cost = safe_float(item.get("cost_thb"))
+                cost_text = "免費" if cost <= 0 else f"{cost:,.0f} THB"
+                spot_html = (
+                    f'<div class="spot" style="--day:{theme["main"]};--soft:{theme["soft"]}">'
+                    f'<div class="spot-num">{idx}</div><div><div class="spot-title">{esc(item.get("title"))}</div>'
+                    f'<div class="spot-meta">{esc(item.get("start_time"))} · {esc(item.get("duration_min"))} 分鐘<br>'
+                    f'◉ {cost_text}</div></div><div class="ai-tag">🤖 AI</div></div>'
+                )
+                st.markdown(spot_html, unsafe_allow_html=True)
+                if st.button(
+                    f"詢問 AI：{item.get('title', '')}",
+                    key=f"ask_spot_{day_no}_{idx}",
+                    use_container_width=True,
+                ):
+                    ask = (
+                        f"請詳細介紹 Day {day_no} 的「{item.get('title', '')}」，"
+                        "包含景點特色、建議停留方式、注意事項，以及附近值得順遊或用餐的地方。"
+                    )
+                    run_chat_prompt(ask, result)
+    st.button("＋ 新增景點到行程", use_container_width=True, key="add_spot")
 
-    if generate:
+
+def render_map(result: dict[str, Any]) -> None:
+    summary = trip_summary(result)
+    stats = (
+        f'<div class="map-stats"><div class="map-stat">📍 {summary["spots"]} 個景點</div>'
+        f'<div class="map-stat">🛣 {summary["moves"]} 次移動</div>'
+        f'<div class="map-stat">◷ {summary["hours"]} 小時</div>'
+        f'<div class="map-stat">💰 {summary["cost_thb"]:,.0f} THB</div></div>'
+    )
+    st.markdown(
+        f'<div class="map-head"><div class="panel-title">🗺&nbsp; 行程地圖</div>{stats}</div>',
+        unsafe_allow_html=True,
+    )
+    if folium is None or st_folium is None:
+        st.info("請安裝 folium 與 streamlit-folium 以顯示地圖。")
+        return
+
+    itinerary = result.get("itinerary", []) or []
+    first_city = itinerary[0].get("city", "Bangkok") if itinerary else "Bangkok"
+    map_obj = folium.Map(location=CITY_CENTER.get(first_city, CITY_CENTER["Bangkok"]), zoom_start=12, tiles="CartoDB positron")
+    all_points: list[tuple[float, float]] = []
+    for day_index, day in enumerate(itinerary):
+        day_no = int(day.get("day", day_index + 1))
+        color = day_theme(day_no)["main"]
+        points = []
+        for idx, item in enumerate(day.get("items", []) or [], start=1):
+            lat, lng = marker_position(day.get("city", "Bangkok"), day_no, idx)
+            points.append((lat, lng))
+            all_points.append((lat, lng))
+            title = esc(item.get("title"))
+            popup = (
+                f"<b>D{day_no}-{idx} {title}</b><br>"
+                f"{esc(item.get('start_time'))} · {esc(item.get('duration_min'))} 分鐘<br>"
+                f"{safe_float(item.get('cost_thb')):,.0f} THB"
+            )
+            folium.Marker(
+                [lat, lng],
+                popup=folium.Popup(popup, max_width=260),
+                tooltip=f"D{day_no}-{idx} {title}",
+                icon=folium.DivIcon(
+                    html=f"""<div style="width:34px;height:34px;border-radius:50%;background:{color};
+                    color:#fff;border:3px solid #fff;box-shadow:0 4px 12px #999;display:flex;
+                    align-items:center;justify-content:center;font-weight:800;font-size:12px">{idx}</div>"""
+                ),
+            ).add_to(map_obj)
+        if len(points) > 1:
+            folium.PolyLine(points, color=color, weight=4, opacity=.78).add_to(map_obj)
+    if all_points:
+        map_obj.fit_bounds(all_points, padding=(25, 25))
+    st_folium(map_obj, width=None, height=690, returned_objects=[])
+
+
+def send_chat_message(message: str, result: dict[str, Any]) -> str:
+    response = requests.post(
+        MEMBER_A_CHAT_URL,
+        json={
+            "message": message,
+            "history": st.session_state.get("chat_messages", []),
+            "current_itinerary": result,
+        },
+        timeout=90,
+    )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise RuntimeError("AI 聊天 API 未回傳 JSON") from exc
+    if response.status_code != 200:
+        raise RuntimeError(data.get("error", f"HTTP {response.status_code}"))
+    return str(data.get("reply", "AI 暫時沒有回覆。"))
+
+
+def run_chat_prompt(message: str, result: dict[str, Any]) -> None:
+    st.session_state.setdefault("chat_messages", [])
+    st.session_state["chat_messages"].append({"role": "user", "content": message})
+    with st.spinner("AI 正在回覆..."):
         try:
-            run_generation(city, days, people, budget, preference_labels)
-            st.success("行程生成完成，已自動建立地圖標記。")
-        except Exception as e:
-            st.error(f"呼叫 API 或建立地圖失敗：{e}")
+            reply = send_chat_message(message, result)
+        except Exception as exc:
+            reply = f"目前無法連線至 AI 聊天 API：{exc}"
+    st.session_state["chat_messages"].append({"role": "assistant", "content": reply})
+    st.rerun()
 
-    if "latest_result" in st.session_state:
-        render_result_dashboard(st.session_state["latest_result"])
 
-    if st.session_state.get("scroll_to_result"):
-        scroll_to_result()
-        st.session_state["scroll_to_result"] = False
+def render_chat(result: dict[str, Any]) -> None:
+    if "chat_messages" not in st.session_state:
+        st.session_state["chat_messages"] = [
+            {"role": "assistant", "content": "你好！我是你的泰國旅遊助手 🇹🇭\n有任何問題都可以問我喔！"}
+        ]
 
-    render_floating_hint()
+    messages_html = ""
+    for message in st.session_state["chat_messages"][-8:]:
+        role = "user" if message.get("role") == "user" else "assistant"
+        prefix = "" if role == "user" else "🤖 "
+        messages_html += f'<div class="msg {role}">{prefix}{esc(message.get("content"))}</div>'
+    st.markdown(
+        f"""
+        <div class="chat-shell">
+          <div class="chat-head">🤖&nbsp; AI 旅遊助手</div>
+          <div class="chat-welcome">你好！我是你的泰國旅遊助手 🇹🇭<br>有任何問題都可以問我喔！</div>
+          <div class="today">今天</div><div class="messages">{messages_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    city = trip_summary(result)["cities"][0] if trip_summary(result)["cities"] else "泰國"
+    quick_prompts = {
+        "推薦附近美食": f"請依照目前的 {city} 行程，推薦每一天景點附近適合順路安排的在地美食。",
+        "交通方式建議": f"請分析目前的 {city} 行程，提供景點之間的交通方式、預估時間與移動注意事項。",
+        "景點詳細介紹": f"請逐一介紹目前 {city} 行程中的主要景點特色、建議停留方式與參觀注意事項。",
+        "預算分析": "請分析目前行程的預估費用，說明主要花費項目，並提供節省預算的建議。",
+    }
+    quick_cols = st.columns(2)
+    for index, (label, prompt) in enumerate(quick_prompts.items()):
+        with quick_cols[index % 2]:
+            if st.button(label, key=f"quick_{index}", use_container_width=True):
+                run_chat_prompt(prompt, result)
+    with st.form("chat_form", clear_on_submit=True):
+        message = st.text_input("輸入你的問題", placeholder="輸入你的問題...", label_visibility="collapsed")
+        send = st.form_submit_button("傳送", use_container_width=True)
+    if send and message.strip():
+        run_chat_prompt(message.strip(), result)
+
+
+def render_dashboard(result: dict[str, Any]) -> None:
+    render_topbar(result)
+    render_result_hero(result)
+    with st.expander("重新設定旅行條件"):
+        render_planner_form(compact=True)
+    left, middle, right = st.columns([1.0, 2.15, .88], gap="small")
+    with left:
+        with st.container(border=True):
+            render_itinerary(result)
+    with middle:
+        with st.container(border=True):
+            render_map(result)
+    with right:
+        with st.container(border=True):
+            render_chat(result)
+
+
+def main() -> None:
+    st.set_page_config(page_title="Thailand AI Travel Planner", page_icon="🇹🇭", layout="wide")
+    inject_css()
+    if "latest_result" not in st.session_state:
+        render_planner_form()
+    else:
+        render_dashboard(st.session_state["latest_result"])
 
 
 if __name__ == "__main__":

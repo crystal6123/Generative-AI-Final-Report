@@ -80,6 +80,8 @@ class MemberAHandler(BaseHTTPRequestHandler):
             {
                 "ok": ok,
                 "service": "member-a",
+                "python_executable": sys.executable,
+                "google_generativeai_available": _module_available("google.generativeai"),
                 "endpoints": [
                     "GET /health",
                     "POST /member-a/plan",
@@ -247,6 +249,14 @@ def _find_full_db() -> Path:
             "Expected path: member_c/database/thailand_trip_full.db"
         )
     return candidates[0]
+
+
+def _module_available(module_name: str) -> bool:
+    try:
+        __import__(module_name)
+        return True
+    except ImportError:
+        return False
 
 
 if __name__ == "__main__":
