@@ -1,85 +1,96 @@
-"""Minimal Gemini REST client used by member A's LLM planner."""
+"""Gemini client utilities for member A.
+
+This file supports both:
+1. GeminiItineraryPlanner usage through generate_json-like calls if your planner
+   already expects text generation.
+2. The website chatbot through generate_text().
+
+Place this file at:
+    member_a/gemini_client.py
+"""
 
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
-from urllib import error, request
+from typing import Any
 
 
 def load_env_file(path: str | Path) -> None:
+    """Load simple KEY=VALUE pairs from a .env file without overriding env vars."""
     env_path = Path(path)
     if not env_path.exists():
         return
+
     for raw_line in env_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
+
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 class GeminiClient:
-    def __init__(
-        self,
-        *,
-        api_key: str | None = None,
-        model: str | None = None,
-        timeout_seconds: int = 60,
-    ):
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY is required to use Gemini.")
-        self.model = model or os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
-        self.timeout_seconds = timeout_seconds
+    def __init__(self, model_name: str | None = None) -> None:
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        self.model_name = model_name or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
 
-    def generate_json(self, *, prompt: str, schema: dict) -> dict:
-        payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": prompt}],
-                }
-            ],
-            "generationConfig": {
-                "temperature": 0.3,
-                "responseMimeType": "application/json",
-                "responseSchema": schema,
-            },
-        }
-        body = json.dumps(payload).encode("utf-8")
-        req = request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent",
-            data=body,
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": self.api_key,
-            },
-            method="POST",
-        )
+        if not api_key:
+            raise RuntimeError("找不到 GEMINI_API_KEY，請確認專案根目錄 .env 是否已設定。")
+
         try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as response:
-                response_data = json.loads(response.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            details = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Gemini API request failed: {exc.code} {details}") from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"Gemini API request failed: {exc.reason}") from exc
+            import google.generativeai as genai
+        except ImportError as exc:
+            raise RuntimeError(
+                "找不到 google-generativeai，請先執行：python -m pip install google-generativeai"
+            ) from exc
 
-        text = self._extract_text(response_data)
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Gemini returned invalid JSON: {text}") from exc
+        genai.configure(api_key=api_key)
+        self._model = genai.GenerativeModel(self.model_name)
 
-    @staticmethod
-    def _extract_text(response_data: dict) -> str:
-        candidates = response_data.get("candidates") or []
-        if not candidates:
-            raise ValueError("Gemini returned no candidates.")
-        parts = candidates[0].get("content", {}).get("parts") or []
-        texts = [part.get("text", "") for part in parts if part.get("text")]
-        if not texts:
-            raise ValueError("Gemini returned no text parts.")
-        return "".join(texts)
+    def generate_text(self, prompt: str) -> str:
+        """Generate plain text from Gemini."""
+        response = self._model.generate_content(prompt)
+        text = getattr(response, "text", "") or ""
+        return text.strip()
+
+    def generate_json(self, prompt: str) -> dict[str, Any]:
+        """Generate JSON from Gemini and parse it into a dict.
+
+        This method is useful if other member_a modules expect a JSON response.
+        """
+        text = self.generate_text(prompt)
+        return _parse_json_from_text(text)
+
+    def complete(self, prompt: str) -> str:
+        """Compatibility alias for local/LLM clients that call complete()."""
+        return self.generate_text(prompt)
+
+
+def _parse_json_from_text(text: str) -> dict[str, Any]:
+    cleaned = text.strip()
+
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`").strip()
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        cleaned = cleaned[start : end + 1]
+
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Gemini 回傳內容不是合法 JSON：{text}") from exc
+
+    if not isinstance(data, dict):
+        raise RuntimeError("Gemini JSON 回傳必須是 object/dict。")
+    return data
