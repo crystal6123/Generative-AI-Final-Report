@@ -56,7 +56,13 @@ class GeminiClient:
 
     def generate_text(self, prompt: str) -> str:
         """Generate plain text from Gemini."""
-        response = self._model.generate_content(prompt)
+        response = self._model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.45,
+                "max_output_tokens": 2048,
+            },
+        )
         text = getattr(response, "text", "") or ""
         return text.strip()
 
