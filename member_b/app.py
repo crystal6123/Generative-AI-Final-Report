@@ -8,6 +8,7 @@ import math
 import zlib
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import requests
 import streamlit as st
@@ -62,8 +63,7 @@ CITY_CONTENT = {
         "festivals": "4月潑水節、11月水燈節",
     },
     "Chiang Mai": {
-        "image": "chiang-mai.jpg",
-        "image_class": "chiang-mai-img",
+        "image": "chiang-mai(2)_cropped.png",
         "tag": "慢活古城",
         "title": "清邁 Chiang Mai",
         "desc": "古城寺廟、山林咖啡與北泰風情，適合想放慢腳步、深入體驗在地文化的旅人。",
@@ -73,7 +73,7 @@ CITY_CONTENT = {
         "festivals": "2月花卉節、11月天燈節",
     },
     "Phuket": {
-        "image": "phuket.jpg",
+        "image": "phuket(2)_cropped.jpg",
         "tag": "海島度假",
         "title": "普吉 Phuket",
         "desc": "湛藍海水、石灰岩海灣與悠閒沙灘，是跳島、看夕陽與度假放空的理想選擇。",
@@ -99,6 +99,11 @@ DAY_THEMES = [
     {"main": "#16b979", "soft": "#eafaf3"},
     {"main": "#ff8500", "soft": "#fff5e9"},
     {"main": "#2f80ed", "soft": "#edf5ff"},
+    {"main": "#00a6a6", "soft": "#e8fbfb"},
+    {"main": "#d94f30", "soft": "#fff0ec"},
+    {"main": "#8c5a2b", "soft": "#f8f1ea"},
+    {"main": "#7b61ff", "soft": "#f1efff"},
+    {"main": "#2c9c3f", "soft": "#ecfaef"},
 ]
 PREFERENCE_OPTIONS = {
     "文化古蹟": "culture",
@@ -159,14 +164,19 @@ def fallback_total(result: dict[str, Any]) -> float:
 def normalize_result(raw_result: dict[str, Any]) -> dict[str, Any]:
     result = dict(raw_result or {})
     itinerary = []
-    for day in result.get("itinerary", []) or []:
+    for day_index, day in enumerate(result.get("itinerary", []) or []):
         clean_day = dict(day)
-        clean_day["items"] = [
-            dict(item)
-            for item in day.get("items", []) or []
-            if item.get("category") != "cost"
-            and not str(item.get("data_id", "")).startswith("COST_MAP_")
-        ]
+        clean_items = []
+        for item_index, item in enumerate(day.get("items", []) or []):
+            if item.get("category") == "cost" or str(item.get("data_id", "")).startswith("COST_MAP_"):
+                continue
+            clean_item = dict(item)
+            clean_item.setdefault(
+                "_ui_id",
+                f"api_{day.get('day', day_index + 1)}_{item_index}_{clean_item.get('data_id') or clean_item.get('title')}",
+            )
+            clean_items.append(clean_item)
+        clean_day["items"] = clean_items
         itinerary.append(clean_day)
     result["itinerary"] = itinerary
 
@@ -181,6 +191,16 @@ def normalize_result(raw_result: dict[str, Any]) -> dict[str, Any]:
     )
     result["total_cost"] = {"thb": total_thb, "twd": total_twd}
     return result
+
+
+def ensure_item_ui_ids(result: dict[str, Any]) -> None:
+    for day_index, day in enumerate(result.get("itinerary", []) or []):
+        day_no = int(day.get("day", day_index + 1))
+        for item_index, item in enumerate(day.get("items", []) or []):
+            item.setdefault(
+                "_ui_id",
+                f"item_{day_no}_{item_index}_{item.get('data_id') or item.get('title') or uuid4().hex}",
+            )
 
 
 def refresh_total_cost(result: dict[str, Any]) -> None:
@@ -199,6 +219,7 @@ def find_day(result: dict[str, Any], day_no: int) -> dict[str, Any] | None:
 def suggestion_for(day_no: int, item_count: int) -> dict[str, Any]:
     base = SPOT_SUGGESTIONS[(day_no + item_count) % len(SPOT_SUGGESTIONS)]
     return {
+        "_ui_id": f"edit_{uuid4().hex}",
         "title": base["title"],
         "category": base["category"],
         "cost_thb": base["cost_thb"],
@@ -218,9 +239,9 @@ def add_spot_to_day(day_no: int) -> None:
         return
     items = day.setdefault("items", [])
     items.append(suggestion_for(day_no, len(items)))
+    ensure_item_ui_ids(result)
     refresh_total_cost(result)
     st.session_state["latest_result"] = result
-    st.rerun()
 
 
 def delete_spot(day_no: int, item_index: int) -> None:
@@ -230,10 +251,12 @@ def delete_spot(day_no: int, item_index: int) -> None:
         return
     items = day.get("items", [])
     if 0 <= item_index < len(items):
+        removed_ui_id = str(items[item_index].get("_ui_id", ""))
         items.pop(item_index)
+        clear_spot_widget_state(removed_ui_id)
+        ensure_item_ui_ids(result)
         refresh_total_cost(result)
         st.session_state["latest_result"] = result
-        st.rerun()
 
 
 def replace_spot(day_no: int, item_index: int) -> None:
@@ -243,10 +266,19 @@ def replace_spot(day_no: int, item_index: int) -> None:
         return
     items = day.get("items", [])
     if 0 <= item_index < len(items):
+        old_ui_id = str(items[item_index].get("_ui_id", ""))
         items[item_index] = suggestion_for(day_no + item_index + 2, len(items))
+        clear_spot_widget_state(old_ui_id)
+        ensure_item_ui_ids(result)
         refresh_total_cost(result)
         st.session_state["latest_result"] = result
-        st.rerun()
+
+
+def clear_spot_widget_state(item_ui_id: str) -> None:
+    if not item_ui_id:
+        return
+    for prefix in ("ask_spot", "replace_spot", "delete_spot"):
+        st.session_state.pop(f"{prefix}_{item_ui_id}", None)
 
 
 def trip_summary(result: dict[str, Any]) -> dict[str, Any]:
@@ -851,6 +883,7 @@ def render_topbar(result: dict[str, Any]) -> None:
 
 
 def render_itinerary(result: dict[str, Any]) -> None:
+    ensure_item_ui_ids(result)
     itinerary = result.get("itinerary", []) or []
     st.markdown(
         '<div class="panel-title"><span>▣&nbsp; 行程總覽</span></div>',
@@ -863,6 +896,7 @@ def render_itinerary(result: dict[str, Any]) -> None:
         label = f"Day {day_no} · {day.get('city', '')} · {len(items)} 個景點"
         with st.expander(label, expanded=day_index == 0):
             for idx, item in enumerate(items, start=1):
+                item_ui_id = str(item.get("_ui_id") or f"{day_no}_{idx}")
                 cost = safe_float(item.get("cost_thb"))
                 cost_text = "免費" if cost <= 0 else f"{cost:,.0f} THB"
                 spot_html = (
@@ -877,20 +911,35 @@ def render_itinerary(result: dict[str, Any]) -> None:
                 # Three action buttons with smaller font via inline style override
                 action_cols = st.columns(3)
                 with action_cols[0]:
-                    if st.button("詢問AI", key=f"ask_spot_{day_no}_{idx}", use_container_width=True):
+                    if st.button("詢問AI", key=f"ask_spot_{item_ui_id}", use_container_width=True):
                         ask = (
                             f"請詳細介紹 Day {day_no} 的「{item.get('title', '')}」，"
                             "包含景點特色、建議停留方式、注意事項，以及附近值得順遊或用餐的地方。"
                         )
                         run_chat_prompt(ask, result)
                 with action_cols[1]:
-                    if st.button("替換", key=f"replace_spot_{day_no}_{idx}", use_container_width=True):
-                        replace_spot(day_no, idx - 1)
+                    st.button(
+                        "替換",
+                        key=f"replace_spot_{item_ui_id}",
+                        use_container_width=True,
+                        on_click=replace_spot,
+                        args=(day_no, idx - 1),
+                    )
                 with action_cols[2]:
-                    if st.button("刪除", key=f"delete_spot_{day_no}_{idx}", use_container_width=True):
-                        delete_spot(day_no, idx - 1)
-            if st.button(f"＋ 新增景點到 Day {day_no}", key=f"add_spot_day_{day_no}", use_container_width=True):
-                add_spot_to_day(day_no)
+                    st.button(
+                        "刪除",
+                        key=f"delete_spot_{item_ui_id}",
+                        use_container_width=True,
+                        on_click=delete_spot,
+                        args=(day_no, idx - 1),
+                    )
+            st.button(
+                f"＋ 新增景點到 Day {day_no}",
+                key=f"add_spot_day_{day_no}",
+                use_container_width=True,
+                on_click=add_spot_to_day,
+                args=(day_no,),
+            )
 
 
 def render_map(result: dict[str, Any]) -> None:
@@ -957,7 +1006,8 @@ def send_chat_message(message: str, result: dict[str, Any]) -> str:
     concise_message = (
         f"{message}\n\n"
         "請用繁體中文回答，內容要完整且可執行。"
-        "若使用者要求詳細介紹、逐一分析或交通建議，請用條列分段完整回答；"
+        "若使用者要求詳細介紹、逐一分析、推薦美食、附近美食或交通建議，請用條列分段完整回答，"
+        "多天行程至少要涵蓋每一天；"
         "若只是一般簡短問題，再控制在 120 字內。"
     )
     response = requests.post(

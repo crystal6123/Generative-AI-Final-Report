@@ -60,7 +60,7 @@ class GeminiClient:
             prompt,
             generation_config={
                 "temperature": 0.45,
-                "max_output_tokens": 2048,
+                "max_output_tokens": 4096,
             },
         )
         text = getattr(response, "text", "") or ""
