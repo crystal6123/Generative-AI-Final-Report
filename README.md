@@ -84,14 +84,36 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ### 3. 安裝套件
 
+本專案需要安裝的 Python 套件如下：
+
+| 套件 | 是否必要 | 用途 |
+| --- | --- | --- |
+| `streamlit` | 必要 | 啟動 member B 前端網頁 |
+| `requests` | 必要 | member B 呼叫 member A API |
+| `folium` | 必要 | 產生互動式行程地圖 |
+| `streamlit-folium` | 必要 | 在 Streamlit 中顯示 Folium 地圖 |
+| `google-generativeai` | 必要 | 呼叫 Gemini 產生行程與 AI 助手回覆 |
+| `python-dotenv` | 建議 | 管理 `.env` 環境變數 |
+| `pillow` | 建議 | 產生支援中文的圖片式 PDF |
+| `fpdf2` | 建議 | PDF 匯出備援 |
+| `qrcode` | 選用 | 若後續需要產生行程 QR Code 可使用 |
+
+先安裝 `requirements.txt` 內的核心套件：
+
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-PDF 匯出若要支援中文字型圖片式 PDF，可額外安裝：
+再安裝 PDF / 圖片匯出相關套件：
 
 ```powershell
 python -m pip install pillow fpdf2 qrcode
+```
+
+也可以一次安裝全部套件：
+
+```powershell
+python -m pip install streamlit requests folium streamlit-folium google-generativeai python-dotenv pillow fpdf2 qrcode
 ```
 
 ## Gemini 設定
