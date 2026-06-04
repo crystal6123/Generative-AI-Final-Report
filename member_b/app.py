@@ -35,24 +35,29 @@ CITY_CONTENT = {
         "tag": "經典首選",
         "title": "曼谷 Bangkok",
         "desc": "金碧輝煌的寺廟、河岸夜景與熱鬧市集交織，適合文化、美食與購物一次滿足。",
+        "stay": "推薦停留 3-4 天",
     },
     "Chiang Mai": {
         "image": "chiang-mai.jpg",
+        "image_class": "chiang-mai-img",
         "tag": "慢活古城",
         "title": "清邁 Chiang Mai",
         "desc": "古城寺廟、山林咖啡與北泰風情，適合想放慢腳步、深入體驗在地文化的旅人。",
+        "stay": "推薦停留 3-4 天",
     },
     "Phuket": {
         "image": "phuket.jpg",
         "tag": "海島度假",
         "title": "普吉 Phuket",
         "desc": "湛藍海水、石灰岩海灣與悠閒沙灘，是跳島、看夕陽與度假放空的理想選擇。",
+        "stay": "推薦停留 4-5 天",
     },
     "Pattaya": {
         "image": "Pattaya.jpg",
         "tag": "繽紛海濱",
         "title": "芭達雅 Pattaya",
         "desc": "水上市場、海濱活動與多元娛樂兼具，適合安排充滿活力的短程旅行。",
+        "stay": "推薦停留 2-3 天",
     },
 }
 DAY_THEMES = [
@@ -75,6 +80,14 @@ PREFERENCE_OPTIONS = {
     "長輩友善": "elderly_friendly",
     "悠閒步調": "relaxed_pace",
 }
+SPOT_SUGGESTIONS = [
+    {"title": "臥佛寺 / Wat Pho", "category": "culture", "cost_thb": 300, "duration_min": 120, "note": "經典寺廟與按摩文化體驗"},
+    {"title": "鄭王廟 / Wat Arun", "category": "culture", "cost_thb": 200, "duration_min": 90, "note": "河岸地標與夕陽景觀"},
+    {"title": "恰圖恰週末市集 / Chatuchak Market", "category": "market", "cost_thb": 0, "duration_min": 150, "note": "大型市集與伴手禮採買"},
+    {"title": "暹羅商圈 / Siam District", "category": "shopping_mall", "cost_thb": 0, "duration_min": 120, "note": "購物、甜點與室內備案"},
+    {"title": "朱拉隆功夜市 / Chula Night Market", "category": "food", "cost_thb": 350, "duration_min": 90, "note": "在地小吃與年輕夜生活"},
+    {"title": "曼谷藝術文化中心 / BACC", "category": "culture", "cost_thb": 0, "duration_min": 90, "note": "免費藝文展覽與咖啡店"},
+]
 
 
 def esc(value: Any) -> str:
@@ -137,6 +150,72 @@ def normalize_result(raw_result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def refresh_total_cost(result: dict[str, Any]) -> None:
+    total_thb = fallback_total(result)
+    result["預估總費用_THB"] = total_thb
+    result["total_cost"] = {"thb": total_thb, "twd": total_thb * TWD_PER_THB}
+
+
+def find_day(result: dict[str, Any], day_no: int) -> dict[str, Any] | None:
+    for day in result.get("itinerary", []) or []:
+        if int(day.get("day", 0)) == int(day_no):
+            return day
+    return None
+
+
+def suggestion_for(day_no: int, item_count: int) -> dict[str, Any]:
+    base = SPOT_SUGGESTIONS[(day_no + item_count) % len(SPOT_SUGGESTIONS)]
+    return {
+        "title": base["title"],
+        "category": base["category"],
+        "cost_thb": base["cost_thb"],
+        "duration_min": base["duration_min"],
+        "note": base["note"],
+        "data_id": f"MEMBER_B_EDIT_{day_no}_{item_count + 1}",
+        "start_time": "彈性安排",
+    }
+
+
+def add_spot_to_day(day_no: int) -> None:
+    result = st.session_state.get("latest_result")
+    if not result:
+        return
+    day = find_day(result, day_no)
+    if not day:
+        return
+    items = day.setdefault("items", [])
+    items.append(suggestion_for(day_no, len(items)))
+    refresh_total_cost(result)
+    st.session_state["latest_result"] = result
+    st.rerun()
+
+
+def delete_spot(day_no: int, item_index: int) -> None:
+    result = st.session_state.get("latest_result")
+    day = find_day(result, day_no) if result else None
+    if not day:
+        return
+    items = day.get("items", [])
+    if 0 <= item_index < len(items):
+        items.pop(item_index)
+        refresh_total_cost(result)
+        st.session_state["latest_result"] = result
+        st.rerun()
+
+
+def replace_spot(day_no: int, item_index: int) -> None:
+    result = st.session_state.get("latest_result")
+    day = find_day(result, day_no) if result else None
+    if not day:
+        return
+    items = day.get("items", [])
+    if 0 <= item_index < len(items):
+        items[item_index] = suggestion_for(day_no + item_index + 2, len(items))
+        refresh_total_cost(result)
+        st.session_state["latest_result"] = result
+        st.rerun()
+
+
 def trip_summary(result: dict[str, Any]) -> dict[str, Any]:
     itinerary = result.get("itinerary", []) or []
     items = [item for day in itinerary for item in day.get("items", []) or []]
@@ -161,58 +240,75 @@ def marker_position(city: str, day_no: int, item_idx: int) -> tuple[float, float
 
 
 def inject_css() -> None:
-    hero = image_data_uri("hero-bangkok.jpg")
     css = """
         <style>
         :root {
-            --ink:#182238; --muted:#758098; --line:#e6ebf3; --pink:#f54d8d;
-            --shadow:0 10px 28px rgba(31,42,68,.08);
+            --ink:#182238; --muted:#758098; --line:#dfe8f5; --pink:#f54d8d;
+            --card-radius:22px; --shadow:0 12px 32px rgba(31,42,68,.08);
         }
         .stApp { background:#fbfcfe; color:var(--ink); }
         header[data-testid="stHeader"] { background:transparent; }
         section[data-testid="stSidebar"] { display:none!important; }
-        .block-container { max-width:1800px; padding:1.15rem 1.4rem 2rem; }
-        div[data-testid="stVerticalBlock"] { gap:.75rem; }
-        .app-shell { background:#fff; border:1px solid var(--line); border-radius:22px;
-            box-shadow:var(--shadow); padding:14px 16px; }
+        html, body, [class*="css"] { font-size:20px; }
+        .block-container { max-width:1840px; padding:1.3rem 1.7rem 2.4rem; }
+        div[data-testid="stVerticalBlock"] { gap:1rem; }
+        div[data-testid="stVerticalBlockBorderWrapper"] { border:1px solid #e3ebf5!important;
+            border-radius:22px!important; box-shadow:0 10px 28px rgba(31,42,68,.06)!important; overflow:hidden; }
+        .app-shell { background:#fff; border:1px solid var(--line); border-radius:var(--card-radius);
+            box-shadow:var(--shadow); padding:18px 20px; }
         .topbar { display:flex; align-items:center; justify-content:space-between; gap:16px; }
         .brand { display:flex; align-items:center; gap:14px; }
-        .flag { font-size:34px; }
-        .title { font-size:30px; font-weight:900; color:#101828; letter-spacing:-.5px; }
+        .flag { font-size:39px; }
+        .title { font-size:34px; font-weight:900; color:#101828; letter-spacing:-.5px; }
         .spark { color:#ffb11b; }
-        .top-actions { display:flex; gap:10px; }
-        .ghost { border:1px solid var(--line); border-radius:10px; padding:10px 15px;
-            font-weight:800; color:#43506a; background:#fff; }
         .summary-row { display:flex; flex-wrap:wrap; gap:12px; margin-top:14px; }
-        .chip { display:inline-flex; align-items:center; gap:8px; padding:9px 14px;
-            border:1px solid var(--line); border-radius:9px; background:#fff;
-            color:#29344b; font-size:15px; font-weight:700; }
+        .chip { display:inline-flex; align-items:center; gap:8px; padding:12px 17px;
+            border:1px solid var(--line); border-radius:14px; background:#fff;
+            color:#29344b; font-size:17px; font-weight:700; }
         .chip.hot { color:#ed3f7d; background:#fff0f5; border-color:#ffe3ee; }
-        .hero { min-height:300px; border-radius:22px; padding:42px; display:flex; align-items:flex-end;
-            background:linear-gradient(90deg,rgba(13,24,45,.82),rgba(13,24,45,.2)),url("{hero}");
-            background-size:cover; background-position:center; box-shadow:var(--shadow); margin-bottom:16px; }
-        .hero-kicker { color:#ffd166; font-weight:800; letter-spacing:.08em; font-size:13px; }
-        .hero-title { color:#fff; font-size:38px; line-height:1.2; font-weight:950; margin:7px 0 10px; }
-        .hero-copy { color:rgba(255,255,255,.9); max-width:620px; line-height:1.7; font-size:15px; }
-        .city-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:15px 0 20px; }
-        .city-card { background:#fff; border:1px solid var(--line); border-radius:16px; overflow:hidden;
-            box-shadow:var(--shadow); }
-        .city-img { height:145px; background-size:cover; background-position:center; }
-        .city-body { padding:13px 14px 15px; }
-        .city-tag { color:#ef3f80; font-size:11px; font-weight:900; }
-        .city-title { color:#17233b; font-size:17px; font-weight:900; margin:4px 0 6px; }
-        .city-desc { color:#748099; font-size:12px; line-height:1.55; }
-        .result-hero { min-height:150px; border-radius:18px; padding:22px 25px; display:flex; align-items:flex-end;
-            background-size:cover; background-position:center; box-shadow:var(--shadow); margin:12px 0 14px; }
-        .result-hero-title { color:#fff; font-size:24px; font-weight:950; text-shadow:0 2px 9px rgba(0,0,0,.4); }
-        .result-hero-copy { color:rgba(255,255,255,.94); margin-top:4px; font-size:13px;
-            text-shadow:0 2px 7px rgba(0,0,0,.4); }
+        .chip.cost-highlight { background:linear-gradient(135deg,#fff8df,#fff1bd); border-color:#f2d36b;
+            color:#7a4d00; font-size:23px; font-weight:950; box-shadow:0 10px 24px rgba(219,168,39,.18); }
+        .hero { display:grid; grid-template-columns:minmax(360px,.8fr) minmax(520px,1.2fr); gap:0;
+            border-radius:28px; overflow:hidden; background:#102b4c; box-shadow:0 18px 50px rgba(25,49,82,.16);
+            margin-bottom:24px; }
+        .hero-text { padding:58px 54px; display:flex; flex-direction:column; justify-content:center;
+            background:linear-gradient(145deg,#102b4c,#173f68); }
+        .hero-media { background:#eaf4ff; min-height:460px; display:flex; align-items:center; justify-content:center; }
+        .hero-media img { width:100%; height:100%; min-height:460px; object-fit:contain; display:block; }
+        .hero-kicker { color:#ffd166; font-weight:850; letter-spacing:.08em; font-size:17px; }
+        .hero-title { color:#fff; font-size:54px; line-height:1.18; font-weight:950; margin:13px 0 18px; }
+        .hero-copy { color:rgba(255,255,255,.94); max-width:680px; line-height:1.85; font-size:21px; }
+        .section-heading { margin:28px 2px 16px; color:#1b2a44; font-size:30px; font-weight:950; }
+        .section-copy { color:#66758f; font-size:18px; font-weight:500; margin-top:4px; }
+        .city-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:22px; margin:20px 0 32px; }
+        .city-card { background:#fff; border:1px solid var(--line); border-radius:var(--card-radius);
+            overflow:hidden; box-shadow:0 12px 32px rgba(31,42,68,.09); position:relative; }
+        .city-media { height:260px; background:#f2f6fc; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+        .city-media img { width:100%; height:100%; object-fit:cover; object-position:center center; display:block; }
+        .city-media img.chiang-mai-img { object-position:center 28%; }
+        .city-body { padding:24px 24px 26px; min-height:230px; display:flex; flex-direction:column; }
+        .city-tag { position:absolute; left:20px; top:20px; color:#fff; background:linear-gradient(135deg,#5d7df6,#58b6dc);
+            border-radius:10px; padding:7px 13px; font-size:16px; font-weight:900; box-shadow:0 8px 18px rgba(55,91,180,.22); }
+        .city-title { color:#17233b; font-size:28px; font-weight:900; margin:0 0 12px; }
+        .city-desc { color:#66758f; font-size:18px; line-height:1.75; }
+        .city-stay { margin-top:auto; color:#7b8799; font-size:17px; font-weight:750; padding-top:18px; }
+        .result-hero { display:grid; grid-template-columns:42% 58%; border-radius:var(--card-radius); overflow:hidden;
+            background:#fff; box-shadow:var(--shadow); margin:16px 0 20px; border:1px solid #e8eef6; }
+        .result-hero-media { min-height:300px; background:#f3f8ff; display:flex; align-items:center; justify-content:center; }
+        .result-hero-media img { width:100%; height:300px; object-fit:contain; object-position:center center; display:block; }
+        .result-hero-body { padding:34px 38px; display:flex; flex-direction:column; justify-content:center; }
+        .result-hero-title { color:#17233b; font-size:38px; font-weight:950; }
+        .result-hero-copy { color:#66758f; margin-top:10px; font-size:20px; line-height:1.75; }
+        .planner-title { font-size:30px; font-weight:950; color:#1b2a44; margin:8px 0 2px; }
+        .planner-copy { font-size:18px; color:#6b7890; margin-bottom:10px; }
+        .planner-card, .st-key-planner_card { background:linear-gradient(135deg,#fff7fb,#fffafd); border:1px solid #f4dce8;
+            border-radius:var(--card-radius); padding:26px 28px; box-shadow:0 12px 30px rgba(239,87,145,.07); margin:24px 0 26px; }
         .content-panel { background:#fff; border:1px solid var(--line); border-radius:18px;
             box-shadow:var(--shadow); padding:13px; min-height:720px; }
         .panel-title { display:flex; justify-content:space-between; align-items:center;
-            font-size:20px; font-weight:900; color:#24314b; margin:2px 4px 12px; }
+            font-size:28px; font-weight:900; color:#24314b; margin:6px 6px 18px; }
         .small-action { color:#65718a; border:1px solid var(--line); border-radius:9px;
-            padding:7px 10px; font-size:12px; background:#fff; }
+            padding:8px 11px; font-size:14px; background:#f6f9ff; }
         .day-card { border:1px solid var(--line); border-radius:14px; overflow:hidden; margin-bottom:9px; }
         .day-card.active { border-color:var(--day); box-shadow:0 7px 18px var(--soft); }
         .day-head { display:flex; align-items:center; justify-content:space-between;
@@ -221,79 +317,122 @@ def inject_css() -> None:
         .day-city { color:var(--day); font-size:13px; font-weight:600; }
         .count { color:var(--day); background:var(--soft); padding:5px 9px; border-radius:999px;
             font-size:12px; font-weight:800; }
-        .spot { display:grid; grid-template-columns:28px 1fr auto; gap:9px; align-items:center;
-            padding:10px 11px; border-top:1px solid #eef1f6; }
-        .spot-num { width:20px; height:20px; border-radius:50%; display:flex; align-items:center;
-            justify-content:center; color:#fff; background:var(--day); font-size:11px; font-weight:900; }
-        .spot-title { font-size:13.5px; font-weight:900; color:#202b43; margin-bottom:3px; }
-        .spot-meta { color:#748099; font-size:11.5px; line-height:1.45; }
+        .spot { display:grid; grid-template-columns:36px 1fr auto; gap:12px; align-items:center;
+            padding:14px 13px; border-top:1px solid #eef1f6; }
+        .spot-num { width:28px; height:28px; border-radius:50%; display:flex; align-items:center;
+            justify-content:center; color:#fff; background:var(--day); font-size:14px; font-weight:900; }
+        .spot-title { font-size:20px; font-weight:900; color:#202b43; margin-bottom:6px; }
+        .spot-meta { color:#68758d; font-size:17px; line-height:1.6; }
         .ai-tag { color:var(--day); background:var(--soft); border-radius:8px; padding:6px 7px;
-            font-size:11px; font-weight:900; }
+            font-size:13px; font-weight:900; }
         .map-head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
         .map-stats { display:flex; gap:7px; flex-wrap:wrap; justify-content:flex-end; }
-        .map-stat { border:1px solid var(--line); border-radius:9px; padding:7px 9px;
-            background:#fff; font-size:12px; color:#39455e; font-weight:700; }
+        .map-stat { border:1px solid var(--line); border-radius:9px; padding:9px 11px;
+            background:#fff; font-size:14px; color:#39455e; font-weight:700; }
         iframe { border-radius:14px; }
         .chat-shell { border:1px solid var(--line); border-radius:18px 18px 0 0;
             box-shadow:var(--shadow); background:#fff; overflow:hidden; }
-        .chat-head { padding:17px 16px; border-bottom:1px solid var(--line); font-size:20px;
+        .chat-head { padding:23px 21px; border-bottom:1px solid var(--line); font-size:28px;
             font-weight:900; color:#26334e; }
-        .chat-welcome { margin:13px; padding:12px; border:1px solid var(--line); border-radius:11px;
-            font-size:13px; line-height:1.55; color:#26334e; }
+        .chat-welcome { margin:15px; padding:15px; border:1px solid #dfe9f7; border-radius:13px;
+            background:#f7fbff; font-size:19px; line-height:1.7; color:#26334e; }
         .today { display:flex; align-items:center; gap:8px; padding:6px 13px; color:#748099;
             font-size:12px; }
         .today:before,.today:after { content:""; height:1px; flex:1; background:var(--line); }
         .messages { padding:7px 13px 12px; min-height:260px; max-height:440px; overflow-y:auto; }
-        .msg { padding:10px 11px; border-radius:11px; margin-bottom:10px; font-size:12.5px;
-            line-height:1.55; white-space:pre-wrap; color:#27334b; }
+        .msg { padding:15px 16px; border-radius:12px; margin-bottom:12px; font-size:18px;
+            line-height:1.65; white-space:pre-wrap; color:#27334b; }
         .msg.user { margin-left:35px; background:#fff0f5; border:1px solid #ffc3d8; }
         .msg.assistant { margin-right:22px; background:#fff; border:1px solid var(--line);
             box-shadow:0 5px 14px rgba(31,42,68,.05); }
-        .form-card { background:#fff; border:1px solid var(--line); border-radius:18px;
-            box-shadow:var(--shadow); padding:16px; margin-bottom:14px; }
-        .landing-title { font-size:26px; font-weight:900; margin-bottom:5px; color:#182238; }
-        .landing-sub { color:#758098; font-size:14px; margin-bottom:12px; }
         .stButton>button, .stFormSubmitButton>button, button[kind="primary"], button[kind="secondary"], button[kind="formSubmit"] {
             border-radius:9px!important; border:0!important; background:linear-gradient(90deg,#ff4f91,#ee3f82)!important;
-            color:#fff!important; font-weight:800!important; min-height:40px; }
+            color:#fff!important; font-weight:800!important; min-height:54px; font-size:19px!important; }
         .stButton>button p, .stFormSubmitButton>button p, button[kind="primary"] p, button[kind="secondary"] p, button[kind="formSubmit"] p {
             color:#fff!important; }
-        div[data-testid="stExpander"] { border:1px solid var(--line); border-radius:14px; overflow:hidden;
-            background:#fff; margin-bottom:9px; }
-        div[data-testid="stExpander"] summary { font-weight:850; color:#27334b; }
-        div[data-testid="stExpander"] summary p { color:#27334b!important; }
-        div[data-baseweb="select"]>div, input, textarea { border-radius:9px!important; }
+        div[data-testid="stExpander"] { border:1px solid var(--line); border-radius:var(--card-radius); overflow:hidden;
+            background:#fff; margin-bottom:14px; box-shadow:0 8px 18px rgba(31,42,68,.04); }
+        div[data-testid="stExpander"] summary { font-weight:850; color:#27334b; background:#f4f9ff; min-height:64px; }
+        div[data-testid="stExpander"] summary p { color:#27334b!important; font-size:19px!important; }
+        div[data-testid="stExpander"] summary svg { color:#5c6f8e!important; fill:#5c6f8e!important; }
+        label, label p, div[data-testid="stWidgetLabel"] p { color:#34445f!important; font-size:20px!important; font-weight:800!important; }
+        div[data-baseweb="select"]>div, div[data-baseweb="base-input"], div[data-testid="stNumberInput"] input,
+        div[data-testid="stTextInput"] input, textarea {
+            border-radius:12px!important; background:#f7fbff!important; color:#1d2b45!important;
+            border-color:#dce8f7!important; font-size:19px!important; min-height:56px; box-shadow:none!important; }
+        div[data-baseweb="select"]>div { border:1px solid #dce8f7!important; overflow:hidden!important; }
+        div[data-baseweb="select"] span, div[data-baseweb="select"] input, div[data-baseweb="select"] svg,
+        div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input, textarea {
+            color:#1d2b45!important; fill:#526581!important; }
+        div[data-testid="stNumberInput"] div[data-baseweb="base-input"] { border:1px solid #dce8f7!important;
+            border-radius:12px!important; overflow:hidden!important; background:#f7fbff!important; box-shadow:none!important; }
+        div[data-testid="stNumberInput"] input { border:0!important; border-radius:0!important; box-shadow:none!important; }
+        div[data-testid="stNumberInput"] button { background:#eef6ff!important; color:#334863!important;
+            border:0!important; border-left:1px solid #dce8f7!important; border-radius:0!important; box-shadow:none!important; }
+        div[data-testid="stNumberInput"] button svg { color:#334863!important; fill:#334863!important; }
+        div[data-baseweb="tag"], div[data-baseweb="tag"] *, span[data-baseweb="tag"], span[data-baseweb="tag"] *,
+        div[data-baseweb="select"] div[role="button"], div[data-baseweb="select"] div[role="button"] * {
+            background:#eaf1ff!important; color:#315caa!important; border-color:#cbdcff!important;
+        }
+        div[data-baseweb="tag"], span[data-baseweb="tag"] { border:1px solid #cbdcff!important; }
+        div[data-baseweb="tag"] svg, span[data-baseweb="tag"] svg { color:#315caa!important; fill:#315caa!important; }
+        div[data-testid="stSlider"] [role="slider"] { background:#6c8cff!important; }
+        div[data-testid="stSlider"] div[role="slider"] + div { background:#6c8cff!important; }
+        .st-key-quick_actions { background:linear-gradient(135deg,#fff7fb,#f4f9ff); border:1px solid #e5edf8;
+            border-radius:16px; padding:13px 12px 8px; margin:12px 0; }
+        .st-key-quick_actions .stButton>button { background:#fff!important; color:#34445f!important;
+            border:1px solid #dce8f7!important; box-shadow:none!important; min-height:58px; }
+        .st-key-quick_actions .stButton>button p { color:#34445f!important; }
+        .st-key-quick_actions .stButton>button:hover { background:#fff0f6!important; border-color:#ffc9dc!important; }
+        .st-key-chat_input_text input, .st-key-chat_input_text div[data-baseweb="base-input"] {
+            background:#f3f5f8!important; border:1px solid #dfe6ef!important; border-radius:14px!important;
+            box-shadow:none!important; outline:none!important; }
+        .st-key-chat_input_text input { font-size:20px!important; min-height:72px!important; height:72px!important;
+            color:#26334e!important; line-height:72px!important; padding:0 18px!important; }
+        .st-key-chat_input_text input:focus, .st-key-chat_input_text div[data-baseweb="base-input"]:focus-within {
+            border-color:#cfd9e8!important; box-shadow:0 0 0 3px rgba(108,140,255,.08)!important; }
         @media (max-width:1100px) {
-            .title{font-size:22px}.top-actions{display:none}.block-container{padding:.7rem}
-            .city-grid{grid-template-columns:1fr 1fr}.content-panel,.chat-shell{min-height:auto}
+            .title{font-size:26px}.block-container{padding:.8rem}
+            .hero,.result-hero{grid-template-columns:1fr}.city-grid{grid-template-columns:1fr}
+            .content-panel,.chat-shell{min-height:auto}
         }
         </style>
         """
     st.markdown(
-        css.replace("{hero}", hero),
+        css,
         unsafe_allow_html=True,
     )
 
 
 def render_landing_content() -> None:
     st.markdown(
-        """
+        f"""
         <div class="hero">
-          <div>
+          <div class="hero-text">
             <div class="hero-kicker">THAILAND · AI TRAVEL PLANNER</div>
             <div class="hero-title">讓每一天，都有值得期待的泰國風景</div>
             <div class="hero-copy">從曼谷寺廟、清邁古城到普吉海灣，輸入你的天數、預算與偏好，交給 AI 規劃一趟兼具節奏、費用與在地體驗的旅程。</div>
           </div>
+          <div class="hero-media"><img src="{image_data_uri('hero-bangkok.jpg')}" alt="曼谷河岸夜景"></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_destination_cards() -> None:
+    st.markdown(
+        '<div class="section-heading">✧ 熱門目的地</div><div class="section-copy">探索適合你的旅行節奏，從文化古城到海島假期都能快速開始。</div>',
+        unsafe_allow_html=True,
+    )
     cards = []
     for content in CITY_CONTENT.values():
+        image_class = content.get("image_class", "")
         cards.append(
-            f"""<div class="city-card"><div class="city-img" style="background-image:url('{image_data_uri(content['image'])}')"></div>
+            f"""<div class="city-card"><div class="city-media"><img class="{esc(image_class)}" src="{image_data_uri(content['image'])}" alt="{esc(content['title'])}"></div>
             <div class="city-body"><div class="city-tag">{esc(content['tag'])}</div>
-            <div class="city-title">{esc(content['title'])}</div><div class="city-desc">{esc(content['desc'])}</div></div></div>"""
+            <div class="city-title">{esc(content['title'])}</div><div class="city-desc">{esc(content['desc'])}</div>
+            <div class="city-stay">{esc(content['stay'])}</div></div></div>"""
         )
     st.markdown(f'<div class="city-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
 
@@ -302,35 +441,31 @@ def render_planner_form(compact: bool = False) -> bool:
     with st.container():
         if not compact:
             render_landing_content()
-        st.markdown(
-            """
-            <div class="form-card">
-              <div class="landing-title">🇹🇭 泰國 AI 智慧旅遊規劃</div>
-              <div class="landing-sub">輸入旅行條件，由 member A API 產生行程，再於此介面查看地圖、費用與 AI 建議。</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        with st.form("planner_form", clear_on_submit=False):
-            cols = st.columns([1.15, .8, .8, 1.1])
-            city = cols[0].selectbox("目的地", list(CITY_CENTER.keys()), key="city")
-            days = cols[1].slider("天數", 1, 10, 4, key="days")
-            people = cols[2].number_input("人數", 1, 20, 2, key="people")
-            budget = cols[3].number_input("預算 TWD", 1000, 300000, 20000, step=1000, key="budget")
-            preferences = st.multiselect(
-                "旅行偏好",
-                list(PREFERENCE_OPTIONS.keys()),
-                default=["文化古蹟", "在地美食"],
-                key="preferences",
-            )
-            submitted = st.form_submit_button("產生 AI 行程", use_container_width=True)
+        with st.container(key="planner_card"):
+            st.markdown('<div class="planner-title">規劃你的泰國旅程</div><div class="planner-copy">設定目的地、天數與預算，AI 將為你安排每日路線。</div>', unsafe_allow_html=True)
+            with st.form("planner_form", clear_on_submit=False):
+                row1 = st.columns(2, gap="large")
+                city = row1[0].selectbox("目的地", list(CITY_CENTER.keys()), key="city")
+                days = row1[1].slider("天數", 1, 10, 4, key="days")
+                row2 = st.columns(2, gap="large")
+                people = row2[0].number_input("人數", 1, 20, 2, key="people")
+                budget_text = row2[1].text_input("預算 TWD", value="20000", key="budget_text")
+                preferences = st.multiselect(
+                    "旅行偏好",
+                    list(PREFERENCE_OPTIONS.keys()),
+                    default=["文化古蹟", "在地美食"],
+                    key="preferences",
+                )
+                submitted = st.form_submit_button("產生 AI 行程", use_container_width=True)
+        if not compact:
+            render_destination_cards()
 
     if submitted:
         payload = {
             "days": days,
             "nights": max(days - 1, 0),
             "people": people,
-            "budget_amount": budget,
+            "budget_amount": safe_float(str(budget_text).replace(",", ""), 20000),
             "budget_currency": "TWD",
             "cities": [city],
             "preferences": [PREFERENCE_OPTIONS[p] for p in preferences] or ["no_special_preference"],
@@ -359,8 +494,8 @@ def render_result_hero(result: dict[str, Any]) -> None:
     city = summary["cities"][0] if summary["cities"] else "Bangkok"
     content = CITY_CONTENT.get(city, CITY_CONTENT["Bangkok"])
     st.markdown(
-        f"""<div class="result-hero" style="background-image:linear-gradient(90deg,rgba(16,31,57,.78),rgba(16,31,57,.12)),url('{image_data_uri(content['image'])}')">
-        <div><div class="result-hero-title">{esc(content['title'])}</div>
+        f"""<div class="result-hero"><div class="result-hero-media"><img src="{image_data_uri(content['image'])}" alt="{esc(content['title'])}"></div>
+        <div class="result-hero-body"><div class="result-hero-title">{esc(content['title'])}</div>
         <div class="result-hero-copy">{esc(content['desc'])}</div></div></div>""",
         unsafe_allow_html=True,
     )
@@ -378,11 +513,10 @@ def render_topbar(result: dict[str, Any]) -> None:
             <div class="brand"><span class="flag">🇹🇭</span>
               <div class="title">{esc(title)} <span class="spark">✦</span></div>
             </div>
-            <div class="top-actions"><div class="ghost">⇩ 匯出行程</div><div class="ghost">⌯ 分享行程</div></div>
           </div>
           <div class="summary-row">
             <div class="chip">👥 {int(payload.get("people", 2))}人出遊</div>
-            <div class="chip">💰 預算 {summary["cost_thb"]:,.0f} THB</div>
+            <div class="chip cost-highlight">💰 預估費用 {summary["cost_thb"]:,.0f} THB</div>
             <div class="chip">📍 {summary["spots"]} 個景點</div>
             <div class="chip">◷ 預估 {summary["hours"]} 小時</div>
             <div class="chip hot">🍜 美食導向</div>
@@ -396,7 +530,7 @@ def render_topbar(result: dict[str, Any]) -> None:
 def render_itinerary(result: dict[str, Any]) -> None:
     itinerary = result.get("itinerary", []) or []
     st.markdown(
-        '<div class="panel-title"><span>▣&nbsp; 行程總覽</span><span class="small-action">點擊展開每日內容</span></div>',
+        '<div class="panel-title"><span>▣&nbsp; 行程總覽</span></div>',
         unsafe_allow_html=True,
     )
     for day_index, day in enumerate(itinerary):
@@ -412,20 +546,25 @@ def render_itinerary(result: dict[str, Any]) -> None:
                     f'<div class="spot" style="--day:{theme["main"]};--soft:{theme["soft"]}">'
                     f'<div class="spot-num">{idx}</div><div><div class="spot-title">{esc(item.get("title"))}</div>'
                     f'<div class="spot-meta">{esc(item.get("start_time"))} · {esc(item.get("duration_min"))} 分鐘<br>'
-                    f'◉ {cost_text}</div></div><div class="ai-tag">🤖 AI</div></div>'
+                    f'◉ {cost_text}</div></div></div>'
                 )
                 st.markdown(spot_html, unsafe_allow_html=True)
-                if st.button(
-                    f"詢問 AI：{item.get('title', '')}",
-                    key=f"ask_spot_{day_no}_{idx}",
-                    use_container_width=True,
-                ):
-                    ask = (
-                        f"請詳細介紹 Day {day_no} 的「{item.get('title', '')}」，"
-                        "包含景點特色、建議停留方式、注意事項，以及附近值得順遊或用餐的地方。"
-                    )
-                    run_chat_prompt(ask, result)
-    st.button("＋ 新增景點到行程", use_container_width=True, key="add_spot")
+                action_cols = st.columns(3)
+                with action_cols[0]:
+                    if st.button("詢問 AI", key=f"ask_spot_{day_no}_{idx}", use_container_width=True):
+                        ask = (
+                            f"請詳細介紹 Day {day_no} 的「{item.get('title', '')}」，"
+                            "包含景點特色、建議停留方式、注意事項，以及附近值得順遊或用餐的地方。"
+                        )
+                        run_chat_prompt(ask, result)
+                with action_cols[1]:
+                    if st.button("替換景點", key=f"replace_spot_{day_no}_{idx}", use_container_width=True):
+                        replace_spot(day_no, idx - 1)
+                with action_cols[2]:
+                    if st.button("刪除景點", key=f"delete_spot_{day_no}_{idx}", use_container_width=True):
+                        delete_spot(day_no, idx - 1)
+            if st.button(f"＋ 新增景點到 Day {day_no}", key=f"add_spot_day_{day_no}", use_container_width=True):
+                add_spot_to_day(day_no)
 
 
 def render_map(result: dict[str, Any]) -> None:
@@ -476,7 +615,7 @@ def render_map(result: dict[str, Any]) -> None:
             folium.PolyLine(points, color=color, weight=4, opacity=.78).add_to(map_obj)
     if all_points:
         map_obj.fit_bounds(all_points, padding=(25, 25))
-    st_folium(map_obj, width=None, height=690, returned_objects=[])
+    st_folium(map_obj, width=None, height=760, returned_objects=[])
 
 
 def send_chat_message(message: str, result: dict[str, Any]) -> str:
@@ -538,13 +677,26 @@ def render_chat(result: dict[str, Any]) -> None:
         "景點詳細介紹": f"請逐一介紹目前 {city} 行程中的主要景點特色、建議停留方式與參觀注意事項。",
         "預算分析": "請分析目前行程的預估費用，說明主要花費項目，並提供節省預算的建議。",
     }
-    quick_cols = st.columns(2)
-    for index, (label, prompt) in enumerate(quick_prompts.items()):
-        with quick_cols[index % 2]:
-            if st.button(label, key=f"quick_{index}", use_container_width=True):
-                run_chat_prompt(prompt, result)
+    quick_labels = {
+        "推薦附近美食": "🍜 推薦附近美食",
+        "交通方式建議": "🚆 交通方式建議",
+        "景點詳細介紹": "🏛 景點詳細介紹",
+        "預算分析": "💰 預算分析",
+    }
+    with st.container(key="quick_actions"):
+        st.caption("你可以直接問")
+        quick_cols = st.columns(2)
+        for index, (label, prompt) in enumerate(quick_prompts.items()):
+            with quick_cols[index % 2]:
+                if st.button(quick_labels[label], key=f"quick_{index}", use_container_width=True):
+                    run_chat_prompt(prompt, result)
     with st.form("chat_form", clear_on_submit=True):
-        message = st.text_input("輸入你的問題", placeholder="輸入你的問題...", label_visibility="collapsed")
+        message = st.text_input(
+            "輸入你的問題",
+            placeholder="有什麼想問 AI 助手的嗎？",
+            label_visibility="collapsed",
+            key="chat_input_text",
+        )
         send = st.form_submit_button("傳送", use_container_width=True)
     if send and message.strip():
         run_chat_prompt(message.strip(), result)
