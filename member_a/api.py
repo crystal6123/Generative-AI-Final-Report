@@ -37,6 +37,10 @@ def workflow_result_to_json(result: WorkflowResult) -> dict[str, Any]:
         "state_marker_labels": marker_labels(state.markers),
         "total_cost": _money_to_json(budget_report.total if budget_report else None),
         "budget": _money_to_json(budget_report.budget if budget_report and budget_report.budget else None),
+        "住宿費用_THB": budget_report.accommodation_thb if budget_report else 0.0,
+        "住宿等級": budget_report.accommodation_level if budget_report else "",
+        "住宿每晚_THB": budget_report.accommodation_per_night_thb if budget_report else 0.0,
+        "預估總費用_THB": budget_report.total.thb if budget_report else 0.0,
         "itinerary": [
             {
                 "day": day.day,
@@ -82,6 +86,7 @@ def _request_from_payload(payload: dict[str, Any]) -> TravelRequest:
         time_flex_minutes=int(payload.get("time_flex_minutes", 30)),
         last_day_start_time=payload.get("last_day_start_time"),
         last_day_end_time=payload.get("last_day_end_time"),
+        accommodation_level=payload.get("accommodation_level") or None,
     )
 
 

@@ -21,7 +21,7 @@ def run_workflow(
     data_gateway = gateway or TravelDataGateway()
     state = WorkflowState(request=request, max_corrections=max_corrections)
     tour_guide = TourGuideAgent(data_gateway, llm_planner=llm_planner)
-    budget_agent = BudgetAgent()
+    budget_agent = BudgetAgent(gateway=data_gateway)
     reviewer = ReviewerAgent(data_gateway)
 
     while True:

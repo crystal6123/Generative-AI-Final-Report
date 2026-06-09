@@ -60,6 +60,8 @@ class TravelRequest:
     time_flex_minutes: int = 30
     last_day_start_time: str | None = None
     last_day_end_time: str | None = None
+    # "low" | "medium" | "comfort" | "luxury" | None (auto-derive from budget)
+    accommodation_level: str | None = None
 
 
 @dataclass
@@ -101,6 +103,9 @@ class BudgetReport:
     budget: Money | None
     over_budget: bool
     reasons: list[str] = field(default_factory=list)
+    accommodation_thb: float = 0.0
+    accommodation_level: str = ""
+    accommodation_per_night_thb: float = 0.0
 
 
 @dataclass(frozen=True)

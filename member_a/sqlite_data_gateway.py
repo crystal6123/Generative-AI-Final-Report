@@ -50,6 +50,57 @@ class SQLiteTravelDataGateway:
             rows = con.execute("select preference_name_en from preference_master").fetchall()
         return tuple(row["preference_name_en"] for row in rows)
 
+    def accommodation_cost_per_night(self, city: str, level: str) -> tuple[float, str]:
+        """Return (typical_price_thb, item_name_en) for a city+level combo.
+
+        level: "low" | "medium" | "comfort" | "luxury"
+        Falls back to Bangkok data when city has no specific entry.
+        """
+        # Map level → SQL LIKE pattern on item_name_en
+        level_keywords: dict[str, str] = {
+            "low": "%hostel%",
+            "medium": "%budget hotel%",
+            "comfort": "%3-star%",
+            "luxury": "%4-star%",
+            "premium": "%5-star%",
+        }
+        keyword = level_keywords.get(level, "%3-star%")
+        with self._connect() as con:
+            # Try city-specific first
+            city_id_row = con.execute(
+                "select city_id from city_master where lower(city_name_en) = lower(?)", (city,)
+            ).fetchone()
+            city_id = city_id_row["city_id"] if city_id_row else None
+            row = None
+            if city_id:
+                row = con.execute(
+                    """select typical_price, item_name_en from cost_item_master
+                       where cost_category = 'accommodation' and city_id = ?
+                       and lower(item_name_en) like lower(?)
+                       limit 1""",
+                    (city_id, keyword),
+                ).fetchone()
+            if row is None:
+                # Fallback: any accommodation matching level (Bangkok data)
+                row = con.execute(
+                    """select typical_price, item_name_en from cost_item_master
+                       where cost_category = 'accommodation'
+                       and lower(item_name_en) like lower(?)
+                       limit 1""",
+                    (keyword,),
+                ).fetchone()
+            if row is None:
+                # Last resort: median accommodation price
+                row = con.execute(
+                    """select typical_price, item_name_en from cost_item_master
+                       where cost_category = 'accommodation'
+                       order by typical_price
+                       limit 1 offset 2""",
+                ).fetchone()
+        if row:
+            return float(row["typical_price"]), str(row["item_name_en"])
+        return 2200.0, "3-star hotel per night"  # hardcoded fallback
+
     def travel_time_minutes(self, origin_area_id: str, destination_area_id: str) -> int | None:
         if not origin_area_id or not destination_area_id or origin_area_id == destination_area_id:
             return 15

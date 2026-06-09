@@ -220,10 +220,14 @@ def normalize_result(raw_result: dict[str, Any], default_city: str = "Bangkok") 
     )
 
     result["預估總費用_THB"] = total_thb
-    total_twd = total_thb * TWD_PER_THB if agreed_total_thb else safe_float(
+    total_twd = total_thb * TWD_PER_THB if agreed_total_thb is not None else safe_float(
         legacy_total.get("twd"), total_thb * TWD_PER_THB
     )
     result["total_cost"] = {"thb": total_thb, "twd": total_twd}
+    # Preserve accommodation fields from API response
+    result.setdefault("住宿費用_THB", safe_float(result.get("住宿費用_THB")))
+    result.setdefault("住宿等級", result.get("住宿等級", ""))
+    result.setdefault("住宿每晚_THB", safe_float(result.get("住宿每晚_THB")))
     return result
 
 
@@ -238,7 +242,9 @@ def ensure_item_ui_ids(result: dict[str, Any]) -> None:
 
 
 def refresh_total_cost(result: dict[str, Any]) -> None:
-    total_thb = fallback_total(result)
+    items_thb = fallback_total(result)
+    accom_thb = safe_float(result.get("住宿費用_THB", 0))
+    total_thb = items_thb + accom_thb
     result["預估總費用_THB"] = total_thb
     result["total_cost"] = {"thb": total_thb, "twd": total_thb * TWD_PER_THB}
 
@@ -424,7 +430,7 @@ def generate_pdf(result: dict[str, Any]) -> bytes:
     pdf.cell(0, 12, f"{city} {summary['days']}D{summary['nights']}N Itinerary", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 11)
     pdf.cell(0, 8,
-             f"People: {summary['spots']} spots  |  Est. {summary['cost_thb']:,.0f} THB  |  ~{summary['hours']}h",
+             f"People: {summary['spots']} spots  |  Est. {summary['cost_thb']:,.0f} THB (total group)  |  ~{summary['hours']}h",
              new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
@@ -508,7 +514,7 @@ def generate_image_pdf(result: dict[str, Any]) -> bytes:
     y += 64
     draw.text(
         (margin, y),
-        f"{summary['days']}天{summary['nights']}夜 · {summary['spots']} 個景點 · 預估 {summary['cost_thb']:,.0f} THB · 約 {summary['hours']} 小時",
+        f"{summary['days']}天{summary['nights']}夜 · {summary['spots']} 個景點 · 全團預估 {summary['cost_thb']:,.0f} THB · 約 {summary['hours']} 小時",
         fill="#53627c",
         font=meta_font,
     )
@@ -884,12 +890,24 @@ def render_planner_form(compact: bool = False) -> bool:
                 days = row1[1].slider("天數", 1, 10, 4, key="days")
                 row2 = st.columns(2, gap="large")
                 people = row2[0].number_input("人數", 1, 20, 2, key="people")
-                budget_text = row2[1].text_input("預算 (TWD)", value="20000", key="budget_text")
+                budget_text = row2[1].text_input("景點餐飲預算 (TWD，不含住宿機票)", value="20000", key="budget_text")
                 if not compact:
                     st.markdown(
-                        '<div class="budget-hint">建議每人預算：5,000 - 30,000 TWD</div>',
+                        '<div class="budget-hint">景點活動餐飲預算（全團總費用）；住宿費用依等級另行估算</div>',
                         unsafe_allow_html=True,
                     )
+                ACCOM_LEVEL_OPTIONS = {
+                    "自動（依預算推算）": "",
+                    "低預算（青旅／預算飯店）": "low",
+                    "一般（3星飯店）": "medium",
+                    "舒適（4星飯店）": "comfort",
+                    "豪華（5星飯店）": "luxury",
+                }
+                accom_label = st.selectbox(
+                    "住宿等級",
+                    list(ACCOM_LEVEL_OPTIONS.keys()),
+                    key="accom_level",
+                )
                 preferences = st.multiselect(
                     "旅行偏好 (可多選)",
                     list(PREFERENCE_OPTIONS.keys()),
@@ -917,6 +935,7 @@ def render_planner_form(compact: bool = False) -> bool:
             "last_day_end_time": "17:00",
             "use_llm": True,
             "llm_provider": "gemini",
+            "accommodation_level": ACCOM_LEVEL_OPTIONS.get(accom_label, "") or None,
         }
         try:
             with st.spinner("AI 正在規劃行程..."):
@@ -958,11 +977,35 @@ def render_result_hero(result: dict[str, Any]) -> None:
     )
 
 
+ACCOM_LEVEL_LABELS = {
+    "low": "低預算住宿",
+    "medium": "3星飯店",
+    "comfort": "4星飯店",
+    "luxury": "5星飯店",
+}
+
+
 def render_topbar(result: dict[str, Any]) -> None:
     summary = trip_summary(result)
     payload = st.session_state.get("last_payload", {})
     city = summary["cities"][0] if summary["cities"] else "Thailand"
     title = f"{city} {summary['days']}天{summary['nights']}夜 AI 智慧旅遊規劃"
+
+    accom_thb = safe_float(result.get("住宿費用_THB"))
+    accom_level = str(result.get("住宿等級", ""))
+    accom_per_night = safe_float(result.get("住宿每晚_THB"))
+    activity_thb = summary["cost_thb"] - accom_thb
+    accom_label = ACCOM_LEVEL_LABELS.get(accom_level, "住宿")
+    nights = summary["nights"]
+
+    accom_chip = ""
+    if accom_thb > 0:
+        rooms = max(1, -(-int(payload.get("people", 2)) // 2))  # ceil(people/2)
+        accom_chip = (
+            f'<div class="chip" title="{esc(accom_label)}：{accom_per_night:,.0f} THB/房晚 × {nights} 晚 × {rooms} 房（每 2 人 1 房）">'
+            f'🏨 住宿 {accom_thb:,.0f} THB（全團）</div>'
+        )
+
     st.markdown(
         f"""
         <div class="app-shell">
@@ -974,10 +1017,11 @@ def render_topbar(result: dict[str, Any]) -> None:
           </div>
           <div class="summary-row">
             <div class="chip">👥 {int(payload.get("people", 2))}人出遊</div>
-            <div class="chip cost-highlight">💰 預估費用 {summary["cost_thb"]:,.0f} THB</div>
+            <div class="chip cost-highlight" title="景點餐飲＋住宿，全團合計">💰 全程預估 {summary["cost_thb"]:,.0f} THB（全團）</div>
+            <div class="chip" title="景點門票＋餐飲，全團合計（每人 {activity_thb // max(int(payload.get("people",1)),1):,.0f} THB）">🎫 景點餐飲 {activity_thb:,.0f} THB（全團）</div>
+            {accom_chip}
             <div class="chip">📍 {summary["spots"]} 個景點</div>
             <div class="chip">◷ 預估 {summary["hours"]} 小時</div>
-            <div class="chip hot">🍜 美食導向</div>
           </div>
         </div>
         """,
@@ -1001,7 +1045,7 @@ def render_itinerary(result: dict[str, Any]) -> None:
             for idx, item in enumerate(items, start=1):
                 item_ui_id = str(item.get("_ui_id") or f"{day_no}_{idx}")
                 cost = safe_float(item.get("cost_thb"))
-                cost_text = "免費" if cost <= 0 else f"{cost:,.0f} THB"
+                cost_text = "免費" if cost <= 0 else f"{cost:,.0f} THB／人"
                 spot_html = (
                     f'<div class="spot" style="--day:{theme["main"]};--soft:{theme["soft"]}">'
                     f'<div class="spot-num">{idx}</div>'
@@ -1052,7 +1096,7 @@ def render_map(result: dict[str, Any]) -> None:
         f'<div class="map-stat">📍 {summary["spots"]} 個景點</div>'
         f'<div class="map-stat">🛣 {summary["moves"]} 次移動</div>'
         f'<div class="map-stat">◷ {summary["hours"]} 小時</div>'
-        f'<div class="map-stat">💰 {summary["cost_thb"]:,.0f} THB</div>'
+        f'<div class="map-stat">💰 {summary["cost_thb"]:,.0f} THB（全團）</div>'
         f'</div>'
     )
     st.markdown(
@@ -1105,7 +1149,7 @@ def render_map(result: dict[str, Any]) -> None:
             popup = (
                 f"<b>D{day_no}-{idx} {title_esc}</b><br>"
                 f"{esc(item.get('start_time'))} · {esc(item.get('duration_min'))} 分鐘<br>"
-                f"{safe_float(item.get('cost_thb')):,.0f} THB{coord_note}"
+                f"{safe_float(item.get('cost_thb')):,.0f} THB／人{coord_note}"
             )
             folium.Marker(
                 [lat, lng],

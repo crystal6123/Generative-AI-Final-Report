@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from itertools import cycle
 
@@ -74,13 +75,17 @@ class TourGuideAgent:
 
     def _search_based_plan(self, state: WorkflowState) -> ItineraryDraft:
         request = state.request
+        per_person_attraction_budget = _per_person_attraction_budget(state)
         records = self.gateway.search(cities=request.cities, tags=request.preferences)
-        records = _filter_records_for_request(_rank_records_for_request(records, request), request)
+        records = _filter_records_for_request(
+            _rank_records_for_request(records, request), request, per_person_attraction_budget
+        )
         target_items = _target_item_count(request)
         if len(records) < target_items:
             supplemental = _filter_records_for_request(
                 _rank_records_for_request(self.gateway.search(cities=request.cities, tags=()), request),
                 request,
+                per_person_attraction_budget,
             )
             records = _merge_records(records, supplemental)
         if not records:
@@ -90,14 +95,20 @@ class TourGuideAgent:
         record_cycle = cycle(records)
         days: list[DayPlan] = []
         cities = request.cities or ("Bangkok",)
+        cost_per_person_used = 0.0
         for day_number in range(1, request.days + 1):
             city = _city_for_day(cities, day_number, request.days)
             day_items: list[ItineraryItem] = []
             for period in _periods_for_day(day_number, request):
-                record = _next_record(record_cycle, used_ids, city, records)
+                record = _next_record_within_budget(
+                    record_cycle, used_ids, city, records,
+                    per_person_attraction_budget, cost_per_person_used,
+                )
                 if record is None:
                     continue
                 start_time = _next_start_time(day_items, period, self.gateway, record, request, day_number)
+                item_cost = record.cost_thb if record.cost_thb > 0 else _fallback_cost_for_category(record.category, record.tags, record.content)
+                cost_per_person_used += item_cost
                 day_items.append(
                     ItineraryItem(
                         day=day_number,
@@ -228,6 +239,9 @@ class TourGuideAgent:
 
 
 class BudgetAgent:
+    def __init__(self, gateway=None):
+        self.gateway = gateway
+
     def calculate(self, state: WorkflowState) -> BudgetReport:
         if state.draft is None:
             raise ValueError("BudgetAgent requires an itinerary draft.")
@@ -247,18 +261,52 @@ class BudgetAgent:
                 free_items.append(f"{item.title} [{item.data_id}]")
             total_thb += cost
 
+        # item costs are per-person; multiply by group size
         total_thb *= max(1, state.request.people)
+        # attraction_thb is the group total for attractions+dining only (matches frontend budget field)
+        attraction_thb = total_thb
+
+        # ── Accommodation ──────────────────────────────────────────────────────
+        nights = max(state.request.nights, 0)
+        accom_thb = 0.0
+        accom_level = ""
+        accom_per_night = 0.0
+        if nights > 0:
+            accom_level = _resolve_accommodation_level(state.request)
+            city = state.request.cities[0] if state.request.cities else "Bangkok"
+            gateway = self.gateway if hasattr(self, "gateway") else None
+            if gateway is not None and hasattr(gateway, "accommodation_cost_per_night"):
+                accom_per_night, accom_name = gateway.accommodation_cost_per_night(city, accom_level)
+            else:
+                accom_per_night, accom_name = _fallback_accommodation(accom_level)
+            # Accommodation is per-room; 1 room per 2 people (minimum 1)
+            rooms = max(1, math.ceil(state.request.people / 2))
+            accom_thb = accom_per_night * nights * rooms
+            reasons.append(
+                f"住宿估算：{accom_name}，每晚 {accom_per_night:,.0f} THB × {nights} 晚 × {rooms} 房 = {accom_thb:,.0f} THB"
+            )
+        total_thb += accom_thb
+
         total = thb_to_money(total_thb)
         budget = request_budget_to_money(state.request.budget_amount, state.request.budget_currency)
-        over_budget = budget is not None and total.thb > budget.thb
+        # Budget from frontend is attractions+dining only (不含住宿), so compare against attraction_thb
+        over_budget = budget is not None and attraction_thb > budget.thb
 
         if estimated_items:
             reasons.append("部分資料庫項目缺少明確費用，已用類別 fallback 合理估價：" + "; ".join(estimated_items))
         if state.draft.items and total.thb == 0 and free_items:
             reasons.append("所有已選項目皆判定為免費或無需門票，因此總費用為 0。")
         if over_budget:
-            reasons.append(f"Total cost {total.thb} THB exceeds budget {budget.thb} THB.")
-        return BudgetReport(total=total, budget=budget, over_budget=over_budget, reasons=reasons)
+            reasons.append(f"景點餐飲費用 {attraction_thb:,.0f} THB 超出預算 {budget.thb:,.0f} THB。")
+        return BudgetReport(
+            total=total,
+            budget=budget,
+            over_budget=over_budget,
+            reasons=reasons,
+            accommodation_thb=accom_thb,
+            accommodation_level=accom_level,
+            accommodation_per_night_thb=accom_per_night,
+        )
 
 
 class ReviewerAgent:
@@ -384,6 +432,29 @@ def _fallback_cost_thb(item: ItineraryItem) -> float:
     return 200.0
 
 
+def _resolve_accommodation_level(request: "TravelRequest") -> str:
+    """Determine accommodation level from explicit setting, defaulting to medium.
+
+    The frontend budget field covers attractions+dining only (不含住宿), so we cannot
+    derive accommodation level from the budget. Use the user's explicit selection or
+    fall back to medium.
+    """
+    if request.accommodation_level:
+        return request.accommodation_level
+    return "medium"
+
+
+def _fallback_accommodation(level: str) -> tuple[float, str]:
+    """Static fallback when gateway doesn't support accommodation lookup."""
+    table = {
+        "low": (700.0, "Budget hotel per night"),
+        "medium": (2200.0, "3-star hotel per night"),
+        "comfort": (4200.0, "4-star hotel per night"),
+        "luxury": (10000.0, "5-star hotel per night"),
+    }
+    return table.get(level, (2200.0, "3-star hotel per night"))
+
+
 def _is_explicitly_free(item: ItineraryItem) -> bool:
     note = (item.cost_note or "").lower()
     title = (item.title or "").lower()
@@ -501,7 +572,7 @@ def _rank_records_for_request(records, request: TravelRequest):
     return sorted(records, key=score)
 
 
-def _filter_records_for_request(records, request: TravelRequest):
+def _filter_records_for_request(records, request: TravelRequest, per_person_budget: float | None = None):
     prefs = set(request.preferences)
     if {"street_food", "night_market", "local_food"}.intersection(prefs) and not {"luxury_budget", "fine_dining"}.intersection(prefs):
         records = [
@@ -513,7 +584,74 @@ def _filter_records_for_request(records, request: TravelRequest):
         affordable = [record for record in records if record.cost_thb <= 500]
         if affordable:
             records = affordable
+    # When a per-person attraction budget cap is known, pre-filter records that are
+    # individually more expensive than the entire remaining allowance so they are never
+    # considered as candidates (avoids picking a single item that blows the budget).
+    if per_person_budget is not None and per_person_budget > 0:
+        affordable = [r for r in records if r.cost_thb <= per_person_budget]
+        if affordable:
+            records = affordable
     return list(records)
+
+
+def _per_person_attraction_budget(state: WorkflowState) -> float | None:
+    """Return the per-person THB budget available for attractions, or None if no budget set.
+
+    The frontend budget field is attractions+dining only (全團，不含住宿).
+    Divide by group size to get the per-person cap.
+    When BUDGET_DOWNSHIFT is active the cap is tightened by 20% to give extra headroom.
+    """
+    request = state.request
+    if request.budget_amount is None:
+        return None
+    budget = request_budget_to_money(request.budget_amount, request.budget_currency)
+    if budget is None:
+        return None
+    people = max(1, request.people)
+    per_person = budget.thb / people
+    if CorrectionMarker.BUDGET_DOWNSHIFT in state.markers:
+        per_person *= 0.80
+    return per_person
+
+
+def _fallback_cost_for_category(category: str, tags: list, title: str) -> float:
+    """Mirror the fallback logic in _cost_for_budget for real-time tracking."""
+    title_lower = title.lower()
+    if category == "food":
+        if "fine_dining" in tags:
+            return 800.0
+        if "street_food" in tags or "local_food" in tags:
+            return 150.0
+        return 300.0
+    if category == "market":
+        return 300.0
+    if category == "activity":
+        if any(t in tags for t in ("spa", "massage", "relax_spa")):
+            return 600.0
+        return 250.0
+    if category == "attraction":
+        if any(k in title_lower for k in ("mall", "market", "park", "bacc")):
+            return 0.0
+        return 200.0
+    return 300.0
+
+
+def _next_record_within_budget(record_cycle, used_ids: set, city: str, records, budget_cap: float | None, cost_used: float):
+    """Like _next_record but skips items that would bust the per-person attraction budget."""
+    fallback = None
+    seen = 0
+    for _ in range(len(records)):
+        record = next(record_cycle)
+        seen += 1
+        if record.record_id in used_ids:
+            continue
+        item_cost = record.cost_thb if record.cost_thb > 0 else _fallback_cost_for_category(record.category, record.tags, record.content)
+        within_budget = budget_cap is None or (cost_used + item_cost) <= budget_cap
+        if fallback is None and within_budget:
+            fallback = record
+        if record.city == city and within_budget:
+            return record
+    return fallback
 
 
 def _merge_records(primary, supplemental):
