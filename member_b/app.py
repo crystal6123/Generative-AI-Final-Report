@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import time
+
 import requests
 import streamlit as st
 
@@ -118,14 +120,40 @@ PREFERENCE_OPTIONS = {
     "長輩友善": "elderly_friendly",
     "悠閒步調": "relaxed_pace",
 }
-SPOT_SUGGESTIONS = [
-    {"title": "臥佛寺 / Wat Pho", "category": "culture", "cost_thb": 300, "duration_min": 120, "note": "經典寺廟與按摩文化體驗"},
-    {"title": "鄭王廟 / Wat Arun", "category": "culture", "cost_thb": 200, "duration_min": 90, "note": "河岸地標與夕陽景觀"},
-    {"title": "恰圖恰週末市集 / Chatuchak Market", "category": "market", "cost_thb": 0, "duration_min": 150, "note": "大型市集與伴手禮採買"},
-    {"title": "暹羅商圈 / Siam District", "category": "shopping_mall", "cost_thb": 0, "duration_min": 120, "note": "購物、甜點與室內備案"},
-    {"title": "朱拉隆功夜市 / Chula Night Market", "category": "food", "cost_thb": 350, "duration_min": 90, "note": "在地小吃與年輕夜生活"},
-    {"title": "曼谷藝術文化中心 / BACC", "category": "culture", "cost_thb": 0, "duration_min": 90, "note": "免費藝文展覽與咖啡店"},
-]
+SPOT_SUGGESTIONS: dict[str, list[dict]] = {
+    "Bangkok": [
+        {"title": "臥佛寺 / Wat Pho", "category": "culture", "cost_thb": 300, "duration_min": 120, "note": "經典寺廟與按摩文化體驗"},
+        {"title": "鄭王廟 / Wat Arun", "category": "culture", "cost_thb": 200, "duration_min": 90, "note": "河岸地標與夕陽景觀"},
+        {"title": "恰圖恰週末市集 / Chatuchak Market", "category": "market", "cost_thb": 0, "duration_min": 150, "note": "大型市集與伴手禮採買"},
+        {"title": "暹羅商圈 / Siam District", "category": "shopping_mall", "cost_thb": 0, "duration_min": 120, "note": "購物、甜點與室內備案"},
+        {"title": "朱拉隆功夜市 / Chula Night Market", "category": "food", "cost_thb": 350, "duration_min": 90, "note": "在地小吃與年輕夜生活"},
+        {"title": "曼谷藝術文化中心 / BACC", "category": "culture", "cost_thb": 0, "duration_min": 90, "note": "免費藝文展覽與咖啡店"},
+    ],
+    "Chiang Mai": [
+        {"title": "素帖寺 / Wat Phra That Doi Suthep", "category": "culture", "cost_thb": 50, "duration_min": 120, "note": "山頂寺廟，俯瞰清邁全景"},
+        {"title": "清邁古城護城河 / Old City Moat", "category": "culture", "cost_thb": 0, "duration_min": 90, "note": "漫步古城牆與護城河"},
+        {"title": "週日夜市 / Sunday Night Market", "category": "market", "cost_thb": 200, "duration_min": 120, "note": "當地工藝品與街頭小吃"},
+        {"title": "清邁動物園 / Chiang Mai Zoo", "category": "family_friendly", "cost_thb": 150, "duration_min": 180, "note": "親子友善，含大貓熊館"},
+        {"title": "Nimman 咖啡街 / Nimmanhaemin Road", "category": "cafe_dessert", "cost_thb": 200, "duration_min": 120, "note": "文青咖啡廳與甜點聚集地"},
+        {"title": "Doi Inthanon 國家公園", "category": "culture", "cost_thb": 300, "duration_min": 240, "note": "泰國最高峰與瀑布健行"},
+    ],
+    "Phuket": [
+        {"title": "芭東海灘 / Patong Beach", "category": "beach_island", "cost_thb": 0, "duration_min": 180, "note": "普吉最熱鬧的海灘"},
+        {"title": "查龍廟 / Wat Chalong", "category": "culture", "cost_thb": 0, "duration_min": 90, "note": "普吉最重要的佛寺"},
+        {"title": "老普吉城 / Phuket Old Town", "category": "culture", "cost_thb": 0, "duration_min": 120, "note": "葡萄牙殖民風情建築街"},
+        {"title": "皮皮島日遊 / Phi Phi Island Day Trip", "category": "beach_island", "cost_thb": 1200, "duration_min": 360, "note": "跳島浮潛與石灰岩海灣"},
+        {"title": "Big Buddha 大佛", "category": "culture", "cost_thb": 0, "duration_min": 90, "note": "山頂地標，360度海景"},
+        {"title": "普吉夜市 / Phuket Night Market", "category": "market", "cost_thb": 300, "duration_min": 120, "note": "在地小吃與海鮮燒烤"},
+    ],
+    "Pattaya": [
+        {"title": "珊瑚島 / Koh Larn", "category": "beach_island", "cost_thb": 300, "duration_min": 300, "note": "芭達雅最熱門的近郊小島"},
+        {"title": "真理寺 / Sanctuary of Truth", "category": "culture", "cost_thb": 500, "duration_min": 120, "note": "純木造宏偉神殿"},
+        {"title": "芭達雅水上市場 / Pattaya Floating Market", "category": "market", "cost_thb": 200, "duration_min": 150, "note": "傳統水上市場與泰式小吃"},
+        {"title": "Walking Street 步行街", "category": "night_market", "cost_thb": 0, "duration_min": 120, "note": "芭達雅最熱鬧的夜生活街道"},
+        {"title": "農莊樂園 / Nong Nooch Tropical Garden", "category": "family_friendly", "cost_thb": 500, "duration_min": 180, "note": "熱帶植物園與大象表演"},
+        {"title": "芭達雅海灘 / Pattaya Beach", "category": "beach_island", "cost_thb": 0, "duration_min": 120, "note": "主海灘散步與水上活動"},
+    ],
+}
 
 
 def esc(value: Any) -> str:
@@ -161,11 +189,12 @@ def fallback_total(result: dict[str, Any]) -> float:
     )
 
 
-def normalize_result(raw_result: dict[str, Any]) -> dict[str, Any]:
+def normalize_result(raw_result: dict[str, Any], default_city: str = "Bangkok") -> dict[str, Any]:
     result = dict(raw_result or {})
     itinerary = []
     for day_index, day in enumerate(result.get("itinerary", []) or []):
         clean_day = dict(day)
+        clean_day.setdefault("city", default_city)
         clean_items = []
         for item_index, item in enumerate(day.get("items", []) or []):
             if item.get("category") == "cost" or str(item.get("data_id", "")).startswith("COST_MAP_"):
@@ -180,10 +209,15 @@ def normalize_result(raw_result: dict[str, Any]) -> dict[str, Any]:
         itinerary.append(clean_day)
     result["itinerary"] = itinerary
 
-    agreed_total_thb = safe_float(result.get("預估總費用_THB"))
+    agreed_total_thb_raw = result.get("預估總費用_THB")
+    agreed_total_thb = safe_float(agreed_total_thb_raw) if agreed_total_thb_raw not in (None, "") else None
     legacy_total = result.get("total_cost") or {}
-    legacy_total_thb = safe_float(legacy_total.get("thb"))
-    total_thb = agreed_total_thb or legacy_total_thb or fallback_total(result)
+    legacy_total_thb = safe_float(legacy_total.get("thb")) if legacy_total.get("thb") not in (None, "") else None
+    total_thb = (
+        agreed_total_thb if agreed_total_thb is not None
+        else legacy_total_thb if legacy_total_thb is not None
+        else fallback_total(result)
+    )
 
     result["預估總費用_THB"] = total_thb
     total_twd = total_thb * TWD_PER_THB if agreed_total_thb else safe_float(
@@ -216,8 +250,9 @@ def find_day(result: dict[str, Any], day_no: int) -> dict[str, Any] | None:
     return None
 
 
-def suggestion_for(day_no: int, item_count: int) -> dict[str, Any]:
-    base = SPOT_SUGGESTIONS[(day_no + item_count) % len(SPOT_SUGGESTIONS)]
+def suggestion_for(day_no: int, item_count: int, city: str = "Bangkok") -> dict[str, Any]:
+    pool = SPOT_SUGGESTIONS.get(city) or SPOT_SUGGESTIONS["Bangkok"]
+    base = pool[(day_no + item_count) % len(pool)]
     return {
         "_ui_id": f"edit_{uuid4().hex}",
         "title": base["title"],
@@ -238,7 +273,7 @@ def add_spot_to_day(day_no: int) -> None:
     if not day:
         return
     items = day.setdefault("items", [])
-    items.append(suggestion_for(day_no, len(items)))
+    items.append(suggestion_for(day_no, len(items), city=str(day.get("city", "Bangkok"))))
     ensure_item_ui_ids(result)
     refresh_total_cost(result)
     st.session_state["latest_result"] = result
@@ -267,7 +302,9 @@ def replace_spot(day_no: int, item_index: int) -> None:
     items = day.get("items", [])
     if 0 <= item_index < len(items):
         old_ui_id = str(items[item_index].get("_ui_id", ""))
-        items[item_index] = suggestion_for(day_no + item_index + 2, len(items))
+        replace_count = st.session_state.get(f"_replace_count_{day_no}_{item_index}", 0) + 1
+        st.session_state[f"_replace_count_{day_no}_{item_index}"] = replace_count
+        items[item_index] = suggestion_for(day_no + item_index + replace_count, len(items), city=str(day.get("city", "Bangkok")))
         clear_spot_widget_state(old_ui_id)
         ensure_item_ui_ids(result)
         refresh_total_cost(result)
@@ -297,11 +334,74 @@ def trip_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def marker_position(city: str, day_no: int, item_idx: int) -> tuple[float, float]:
+def marker_position(city: str, day_no: int, item_idx: int, item_key: str = "") -> tuple[float, float]:
     lat, lng = CITY_CENTER.get(city, CITY_CENTER["Bangkok"])
-    angle = math.radians((day_no * 73 + item_idx * 47) % 360)
-    radius = 0.018 + (item_idx % 3) * 0.009
+    key_hash = zlib.crc32(item_key.encode()) if item_key else 0
+    angle = math.radians((day_no * 73 + item_idx * 47 + (key_hash & 0xFF)) % 360)
+    radius = 0.018 + ((item_idx + ((key_hash >> 8) & 0xF)) % 3) * 0.009
     return lat + math.sin(angle) * radius, lng + math.cos(angle) * radius
+
+
+_NOMINATIM_HEADERS = {"User-Agent": "ThailandAITravelPlanner/1.0"}
+_NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+
+
+def geocode_spot(title: str, city: str) -> tuple[float, float] | None:
+    """Query Nominatim for a spot's real coordinates. Returns None on failure."""
+    cache: dict[str, tuple[float, float]] = st.session_state.setdefault("_geocode_cache", {})
+    cache_key = f"{city}|{title}"
+    if cache_key in cache:
+        return cache[cache_key]
+    # Extract the English portion after '/' if present (e.g. "臥佛寺 / Wat Pho" → "Wat Pho")
+    query_name = title.split("/")[-1].strip() if "/" in title else title
+    query = f"{query_name}, {city}, Thailand"
+    try:
+        resp = requests.get(
+            _NOMINATIM_URL,
+            params={"q": query, "format": "json", "limit": 1},
+            headers=_NOMINATIM_HEADERS,
+            timeout=5,
+        )
+        data = resp.json()
+        if data:
+            coord = (float(data[0]["lat"]), float(data[0]["lon"]))
+            cache[cache_key] = coord
+            return coord
+    except Exception:
+        pass
+    cache[cache_key] = None  # mark as failed so we don't retry
+    return None
+
+
+def resolve_map_coords(
+    itinerary: list[dict[str, Any]],
+) -> dict[str, tuple[float, float]]:
+    """
+    Return a mapping of cache_key → (lat, lng) for all items in the itinerary.
+    Queries Nominatim with a 1-second delay between requests to respect rate limits.
+    Results are accumulated in session_state so subsequent renders are instant.
+    """
+    cache: dict[str, tuple[float, float]] = st.session_state.setdefault("_geocode_cache", {})
+    coords: dict[str, tuple[float, float] | None] = {}
+    needs_fetch: list[tuple[str, str, str]] = []  # (cache_key, title, city)
+
+    for day in itinerary:
+        city = str(day.get("city", "Bangkok"))
+        for item in day.get("items", []) or []:
+            title = str(item.get("title", ""))
+            key = f"{city}|{title}"
+            if key in cache:
+                coords[key] = cache[key]
+            else:
+                needs_fetch.append((key, title, city))
+
+    for i, (key, title, city) in enumerate(needs_fetch):
+        if i > 0:
+            time.sleep(1.1)  # Nominatim rate limit: 1 req/s
+        result = geocode_spot(title, city)
+        coords[key] = result
+
+    return coords
 
 
 # ── Export helpers ────────────────────────────────────────────────────────────
@@ -820,7 +920,10 @@ def render_planner_form(compact: bool = False) -> bool:
         }
         try:
             with st.spinner("AI 正在規劃行程..."):
-                result = normalize_result(request_trip_plan(payload))
+                result = normalize_result(
+                    request_trip_plan(payload),
+                    default_city=payload.get("cities", ["Bangkok"])[0],
+                )
         except Exception as exc:
             st.error(f"行程 API 呼叫失敗：{exc}")
             return submitted
@@ -962,30 +1065,52 @@ def render_map(result: dict[str, Any]) -> None:
 
     itinerary = result.get("itinerary", []) or []
     first_city = itinerary[0].get("city", "Bangkok") if itinerary else "Bangkok"
+
+    # Fetch real coordinates (uses cache after first load)
+    cache = st.session_state.get("_geocode_cache", {})
+    all_titles = [
+        item.get("title", "")
+        for day in itinerary
+        for item in (day.get("items", []) or [])
+    ]
+    uncached = [t for t in all_titles if f"{first_city}|{t}" not in cache]
+    if uncached:
+        with st.spinner(f"正在查詢 {len(uncached)} 個景點的實際座標..."):
+            resolve_map_coords(itinerary)
+
     map_obj = folium.Map(
         location=CITY_CENTER.get(first_city, CITY_CENTER["Bangkok"]),
         zoom_start=12,
         tiles="CartoDB positron",
     )
     all_points: list[tuple[float, float]] = []
+    geo_cache: dict[str, tuple[float, float] | None] = st.session_state.get("_geocode_cache", {})
     for day_index, day in enumerate(itinerary):
         day_no = int(day.get("day", day_index + 1))
+        city = str(day.get("city", "Bangkok"))
         color = day_theme(day_no)["main"]
         points = []
         for idx, item in enumerate(day.get("items", []) or [], start=1):
-            lat, lng = marker_position(day.get("city", "Bangkok"), day_no, idx)
+            title_str = str(item.get("title", ""))
+            real_coord = geo_cache.get(f"{city}|{title_str}")
+            if real_coord:
+                lat, lng = real_coord
+            else:
+                item_key = str(item.get("data_id") or title_str or idx)
+                lat, lng = marker_position(city, day_no, idx, item_key)
             points.append((lat, lng))
             all_points.append((lat, lng))
-            title = esc(item.get("title"))
+            title_esc = esc(title_str)
+            coord_note = "" if real_coord else " ·&nbsp;📍估算位置"
             popup = (
-                f"<b>D{day_no}-{idx} {title}</b><br>"
+                f"<b>D{day_no}-{idx} {title_esc}</b><br>"
                 f"{esc(item.get('start_time'))} · {esc(item.get('duration_min'))} 分鐘<br>"
-                f"{safe_float(item.get('cost_thb')):,.0f} THB"
+                f"{safe_float(item.get('cost_thb')):,.0f} THB{coord_note}"
             )
             folium.Marker(
                 [lat, lng],
                 popup=folium.Popup(popup, max_width=260),
-                tooltip=f"D{day_no}-{idx} {title}",
+                tooltip=f"D{day_no}-{idx} {title_esc}",
                 icon=folium.DivIcon(
                     html=(
                         f'<div style="width:34px;height:34px;border-radius:50%;background:{color};'
